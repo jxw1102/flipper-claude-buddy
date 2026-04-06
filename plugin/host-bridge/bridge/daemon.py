@@ -143,6 +143,9 @@ class Daemon:
         action = request.get("action", "")
 
         if action == "notify":
+            if self._perm_future and not self._perm_future.done():
+                log.info("Dismissing pending permission (deferring to Claude)")
+                self._perm_future.set_result({"ask": True})
             sound = request.get("sound", "alert")
             vibro = request.get("vibro", True)
             text = request.get("text", "")
@@ -164,13 +167,6 @@ class Daemon:
         elif action == "claude_disconnect":
             self._claude_connected = False
             await self.serial.send(protocol.state_msg(False))
-            return {"status": "ok"}
-
-        elif action == "dismiss_permission":
-            if self._perm_future and not self._perm_future.done():
-                log.info("Dismissing pending permission (deferring to Claude)")
-                self._perm_future.set_result({"ask": True})
-            await self.serial.send(protocol.notify_msg("led_off", vibro=False, text=""))
             return {"status": "ok"}
 
         elif action == "permission_request":

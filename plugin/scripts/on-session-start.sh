@@ -8,6 +8,17 @@ SOCKET="/tmp/claude-flipper-bridge.sock"
 PIDFILE="/tmp/claude-flipper-bridge.pid"
 LOG="/tmp/claude-flipper-bridge.log"
 
+# Read hook payload from stdin and extract the model for display.
+PAYLOAD=$(cat)
+MODEL=$(echo "$PAYLOAD" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print((data.get("model") or "")[:21])
+except Exception:
+    print("")
+' 2>/dev/null)
+
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-.}"
 PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-/tmp/flipper-claude-buddy}"
 BRIDGE_DIR="$PLUGIN_ROOT/host-bridge"
@@ -105,7 +116,7 @@ echo $((COUNT + 1)) > "$REFCOUNT_FILE"
 echo '{"action":"claude_connect"}' \
     | nc -U "$SOCKET" 2>/dev/null || true
 
-echo '{"action":"notify","sound":"connect","vibro":true,"text":"Claude Code","subtext":"Session started"}' \
+echo "{\"action\":\"notify\",\"sound\":\"connect\",\"vibro\":true,\"text\":\"Session Start\",\"subtext\":\"$MODEL\"}" \
     | nc -U "$SOCKET" 2>/dev/null || true
 
 exit 0

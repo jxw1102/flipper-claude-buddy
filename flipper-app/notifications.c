@@ -18,6 +18,7 @@
 
 // Restore: blue solid (applied after transient flash when LedStateWorking)
 static const NotificationSequence seq_restore_working = {
+    &message_blink_stop,
     &message_red_0,
     &message_green_0,
     &message_blue_255,
@@ -333,6 +334,28 @@ static const NotificationSequence seq_mute_off = {
     NULL,
 };
 
+// Compacting: cyan blink (persistent — context compaction in progress)
+static const NotificationSequence seq_led_compact = {
+    &message_blink_start_10,
+    &message_blink_set_color_cyan,
+    &message_do_not_reset,
+    NULL,
+};
+
+// Compact done: stop blink + short C5 ding + cyan flash then off
+static const NotificationSequence seq_compact_done = {
+    &message_blink_stop,
+    &message_red_0,
+    &message_green_255,
+    &message_blue_255,
+    &message_note_c5,
+    &message_delay_50,
+    &message_sound_off,
+    &message_green_0,
+    &message_blue_0,
+    NULL,
+};
+
 static const NotificationSequence* const sound_table[] = {
     [SoundSuccess]        = &seq_success,
     [SoundError]          = &seq_error,
@@ -355,6 +378,8 @@ static const NotificationSequence* const sound_table[] = {
     [SoundReady]          = &seq_ready,
     [SoundMuteOn]         = &seq_mute_on,
     [SoundMuteOff]        = &seq_mute_off,
+    [SoundLedCompact]     = &seq_led_compact,
+    [SoundCompactDone]    = &seq_compact_done,
 };
 
 void notify_play(NotificationApp* app, SoundType sound, LedState restore) {

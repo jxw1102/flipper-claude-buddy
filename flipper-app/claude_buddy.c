@@ -43,8 +43,8 @@ typedef struct {
     FuriTimer* usb_poll_timer; // non-NULL only in USB mode; polls for cable removal
     bool hello_sent;
     bool muted;      // suppress all sounds (toggled by long-press Down)
-    bool is_working; // blue LED active — alerts should flash cyan then return to blue
-    bool dictating;  // true while dictation is active (set by voice_start / cleared by voice_stop)
+    bool is_working;    // blue LED active — alerts should flash cyan then return to blue
+    bool dictating;     // true while dictation is active (set by voice_start / cleared by voice_stop)
     ProtocolMessage rx_msg_buf;     // Buffer for parsing on transport thread
     ProtocolMessage process_msg_buf; // Buffer for executing on GUI thread
     char tx_buf[256];               // Shared TX building buffer (GUI thread)
@@ -91,6 +91,8 @@ static SoundType sound_from_string(const char* name) {
     if(strcmp(name, "connect") == 0) return SoundConnect;
     if(strcmp(name, "led_working") == 0) return SoundLedWorking;
     if(strcmp(name, "led_off") == 0) return SoundLedOff;
+    if(strcmp(name, "led_compact") == 0) return SoundLedCompact;
+    if(strcmp(name, "compact_done") == 0) return SoundCompactDone;
     if(strcmp(name, "interrupt") == 0) return SoundInterrupt;
     if(strcmp(name, "session_end") == 0) return SoundSessionEnd;
     if(strcmp(name, "ready") == 0) return SoundReady;
@@ -132,8 +134,8 @@ static void process_message(App* app, ProtocolMessage* msg) {
         bool is_voice = (snd == SoundVoiceStart || snd == SoundVoiceStartLed ||
                          snd == SoundVoiceStop || snd == SoundVoiceStopQuiet);
 
-        // Non-LED sounds clear the working state (turn complete, error, interrupt, etc.)
-        if(snd != SoundLedWorking && snd != SoundAlert) {
+        // Non-LED sounds clear the working/compacting state (turn complete, error, interrupt, etc.)
+        if(snd != SoundLedWorking && snd != SoundAlert && snd != SoundLedCompact) {
             app->is_working = false;
         }
 
@@ -163,9 +165,6 @@ static void process_message(App* app, ProtocolMessage* msg) {
                 ui_show_status(app->ui, msg->text, true);
             }
             if(app->is_working) {
-                notify_play(app->notifications, SoundLedWorking, LedStateOff);
-            } else {
-                notify_play(app->notifications, SoundLedOff, LedStateOff);
             }
         }
         break;

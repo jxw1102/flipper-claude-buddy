@@ -7,6 +7,17 @@ SOCKET="/tmp/claude-flipper-bridge.sock"
 PIDFILE="/tmp/claude-flipper-bridge.pid"
 REFCOUNT_FILE="/tmp/claude-flipper-bridge.refcount"
 
+# Read hook payload from stdin and extract the session end reason.
+PAYLOAD=$(cat)
+REASON=$(echo "$PAYLOAD" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print((data.get("reason") or "Disconnected")[:21])
+except Exception:
+    print("Disconnected")
+' 2>/dev/null)
+
 # Decrement session reference counter
 COUNT=$(cat "$REFCOUNT_FILE" 2>/dev/null || echo 1)
 COUNT=$((COUNT - 1))
@@ -21,7 +32,7 @@ fi
 # Only stop bridge when last session ends
 if [ "$COUNT" -le 0 ]; then
     if [ -S "$SOCKET" ]; then
-        echo '{"action":"notify","sound":"session_end","vibro":true,"text":"Claude Code","subtext":"Disconnected"}' \
+        echo "{\"action\":\"notify\",\"sound\":\"session_end\",\"vibro\":true,\"text\":\"Session End\",\"subtext\":\"$REASON\"}" \
             | nc -U "$SOCKET" 2>/dev/null || true
         # Give bridge time to deliver the message to Flipper
         sleep 0.5
