@@ -15,3 +15,6 @@ venv/
 # Flipper build artifacts
 flipper-app/dist/
 flipper-app/.ufbt/
+
+# AI
+.claude
