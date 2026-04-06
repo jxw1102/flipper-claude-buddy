@@ -40,10 +40,6 @@ class DictationBackend(ABC):
     async def stop(self) -> None:
         """Stop dictation (backend-specific cleanup; ESC is sent separately)."""
 
-    @abstractmethod
-    def get_start_name(self) -> str:
-        """Return a short display label shown on the Flipper (max ~21 chars)."""
-
     def is_active(self) -> bool:
         """Return True if dictation is still running (sync, called in executor).
 
@@ -101,26 +97,11 @@ async def _run_applescript(script: str) -> str | None:
 class MacOSDictationBackend(DictationBackend):
     """macOS native dictation triggered via the Edit menu (language-independent)."""
 
-    def __init__(self) -> None:
-        self._start_name = "Start Dictation"
-
-    async def discover(self) -> None:
-        """Cache the localised 'Start Dictation' menu label at startup."""
-        name = await _run_applescript(_MACOS_READ_SCRIPT)
-        if name:
-            self._start_name = name
-            log.info("Cached dictation start name: %r", self._start_name)
-        else:
-            log.warning("Could not read dictation menu item at startup")
-
     async def start(self) -> None:
         await _run_applescript(_MACOS_TOGGLE_SCRIPT)
 
     # stop() is intentionally left as no-op: the daemon sends ESC which
     # dismisses the macOS dictation overlay.
-
-    def get_start_name(self) -> str:
-        return self._start_name
 
     def is_active(self) -> bool:
         """Check for active dictation via pmset power assertions."""
@@ -164,8 +145,6 @@ class CustomDictationBackend(DictationBackend):
     check_cmd:
         Shell command that exits 0 while dictation is active.  If empty,
         ``is_active()`` always returns True (daemon relies on manual toggle).
-    display_name:
-        Label shown on the Flipper display (max ~21 chars).
     """
 
     def __init__(
@@ -173,14 +152,12 @@ class CustomDictationBackend(DictationBackend):
         start_cmd: str,
         stop_cmd: str = "",
         check_cmd: str = "",
-        display_name: str = "Start Dictation",
     ) -> None:
         if not start_cmd:
             raise ValueError("CustomDictationBackend requires a non-empty start_cmd")
         self._start_cmd = start_cmd
         self._stop_cmd = stop_cmd
         self._check_cmd = check_cmd
-        self._display_name = display_name
 
     async def start(self) -> None:
         await _run_shell(self._start_cmd)
@@ -188,9 +165,6 @@ class CustomDictationBackend(DictationBackend):
     async def stop(self) -> None:
         if self._stop_cmd:
             await _run_shell(self._stop_cmd)
-
-    def get_start_name(self) -> str:
-        return self._display_name
 
     def is_active(self) -> bool:
         if not self._check_cmd:
@@ -217,8 +191,7 @@ def create_backend() -> DictationBackend:
     """Return the configured DictationBackend instance.
 
     Reads ``config.DICTATION_BACKEND`` ("macos" or "custom") plus the
-    ``DICTATION_START/STOP/CHECK_CMD`` and ``DICTATION_DISPLAY_NAME`` settings
-    for the custom backend.
+    ``DICTATION_START/STOP/CHECK_CMD`` settings for the custom backend.
     """
     from . import config
 
@@ -243,7 +216,6 @@ def create_backend() -> DictationBackend:
             start_cmd=start_cmd,
             stop_cmd=config.DICTATION_STOP_CMD,
             check_cmd=config.DICTATION_CHECK_CMD,
-            display_name=config.DICTATION_DISPLAY_NAME,
         )
 
     raise ValueError(

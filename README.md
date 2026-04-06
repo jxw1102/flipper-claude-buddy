@@ -18,22 +18,13 @@ Interrupt a runaway task, submit a prompt, trigger voice dictation, or open the 
 |--------|--------|
 | UP | Start / stop voice dictation |
 | LEFT | Interrupt Claude (ESC) |
+| LEFT (hold) | Send Ctrl+C |
 | RIGHT | Open slash command menu |
 | OK | Submit (Enter) |
-| BACK | Dismiss notification |
+| OK (hold) | Type "yes" and submit |
+| DOWN (hold) | Toggle mute |
+| BACK | Send backspace |
 | BACK (hold) | Exit |
-
-## Feedback sounds
-
-| What you hear | What it means |
-|---|---|
-| Ascending chime (C-E-G) | Task completed |
-| Double low beep | Error |
-| Rising question tone | Claude needs your approval |
-| High ding / low dong | Voice dictation on / off |
-| Startup fanfare | Connected and ready |
-
-Vibration accompanies every sound for eyes-free awareness.
 
 ## Setup
 
@@ -47,7 +38,8 @@ Download `claude_buddy.fap` from the [latest release](../../releases/latest) and
 ### 2. Install the Claude Code plugin
 
 ```bash
-claude plugin add /path/to/flipper-claude-buddy/plugin
+claude plugin marketplace add jxw1102/flipper-claude-buddy
+claude plugin install flipper-claude-buddy@flipper-claude-buddy
 ```
 
 Claude Code will ask for your connection preference (`auto`, `usb`, or `ble`). Leave everything else empty for auto-detect.
@@ -62,14 +54,9 @@ Go to **Applications → USB → Claude Buddy**. You'll hear the startup fanfare
 
 Connects over USB (plug-and-play) or Bluetooth LE — whichever is available. USB is preferred when the cable is plugged in; it falls back to BLE automatically.
 
-## `/flipper` command
+**First-time Bluetooth pairing:** on first BLE connection macOS will pair with the Flipper. Accept the pairing prompt on both sides. If the connection fails after a firmware flash or factory reset, remove the Flipper from macOS System Settings → Bluetooth and let it re-pair.
 
-Send a notification to your Flipper from inside a Claude Code session:
-
-```
-/flipper celebrate   → success chime
-/flipper alert       → attention tone
-```
+**Bluetooth permission:** macOS requires Terminal (or your terminal app) to have Bluetooth access. Grant it in System Settings → Privacy & Security → Bluetooth.
 
 ## Troubleshooting
 
@@ -77,7 +64,7 @@ Send a notification to your Flipper from inside a Claude Code session:
 |---|---|
 | Flipper not found over USB | Set `FLIPPER_SERIAL_PORT=/dev/cu.usbmodemXXX` |
 | Flipper not found over BLE | Make sure Bluetooth is on and the app is running on the Flipper |
-| No sound on task complete | Check that the bridge is running (`claude plugin status`) |
+| No sound on task complete | Check that the bridge is running: `cat /tmp/claude-flipper-bridge.log` |
 
 ## License
 

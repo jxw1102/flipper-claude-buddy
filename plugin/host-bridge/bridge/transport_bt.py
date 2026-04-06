@@ -2,14 +2,15 @@
 Bluetooth BLE transport — uses bleak to talk to the Flipper Zero BLE serial service.
 
 Connection flow:
-  1. Scan for a BLE device whose name starts with config.BT_DEVICE_NAME ("Flipper")
+  1. Scan for a BLE device advertising config.FLIPPER_ADV_UUID (0x3082), falling back
+     to a name prefix match against config.BT_DEVICE_NAME ("Flipper")
   2. Connect and look for the Flipper's Serial-over-BLE GATT service
   3. Use the known serial characteristic for both notify (RX) and write (TX)
   4. Subscribe to notifications on the serial characteristic
   5. Incoming notifications are buffered; readline() returns complete lines
 
-Flipper BLE Serial UUIDs (from Momentum firmware):
-  Service:  8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000
+Flipper BLE Serial UUIDs (official and Momentum firmware):
+  Adv UUID: 00003082-0000-1000-8000-00805f9b34fb  (advertised service, used for scan)
   TX char:  19ed82ae-ed21-4c9d-4145-228e61fe0000  (Flipper→host, notify)
   RX char:  19ed82ae-ed21-4c9d-4145-228e62fe0000  (host→Flipper, write)
 
@@ -25,7 +26,6 @@ from .transport import Transport
 log = logging.getLogger(__name__)
 
 
-FLIPPER_SERIAL_SERVICE_UUID = "8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000"
 FLIPPER_SERIAL_TX_UUID = "19ed82ae-ed21-4c9d-4145-228e61fe0000"  # Flipper→host (notify)
 FLIPPER_SERIAL_RX_UUID = "19ed82ae-ed21-4c9d-4145-228e62fe0000"  # host→Flipper (write)
 

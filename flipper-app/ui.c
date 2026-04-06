@@ -433,6 +433,10 @@ static bool status_input(InputEvent* event, void* context) {
         if(ui->event_callback) ui->event_callback(UiEventEnter, NULL, ui->event_context);
         return true;
     }
+    if(event->key == InputKeyOk && event->type == InputTypeLong) {
+        if(ui->event_callback) ui->event_callback(UiEventYes, NULL, ui->event_context);
+        return true;
+    }
     if(event->key == InputKeyLeft && event->type == InputTypeShort) {
         if(ui->event_callback) ui->event_callback(UiEventEsc, NULL, ui->event_context);
         return true;

@@ -7,16 +7,18 @@ from . import config, protocol
 from .claude_ipc import ClaudeIPC
 from .serial_conn import SerialConnection
 from .transport import Transport
-from .voice import DictationBackend, create_backend
+from .input import InputBackend, create_backend as create_input_backend
+from .voice import DictationBackend, create_backend as create_dictation_backend
 
 log = logging.getLogger(__name__)
 
 
 class Daemon:
-    def __init__(self, transport: Transport, dictation: DictationBackend | None = None):
+    def __init__(self, transport: Transport, dictation: DictationBackend | None = None, input_backend: InputBackend | None = None):
         self.serial = SerialConnection(transport)
         self.ipc = ClaudeIPC()
-        self._dictation: DictationBackend = dictation or create_backend()
+        self._dictation: DictationBackend = dictation or create_dictation_backend()
+        self._input: InputBackend = input_backend or create_input_backend()
         self._dictating = False
         self._claude_connected = False
         self._perm_future: asyncio.Future | None = None
@@ -61,6 +63,9 @@ class Daemon:
             text = data.get("text", "")
             if text:
                 await self._send_to_claude(text)
+
+        elif msg_type == "yes":
+            await self._send_to_claude("yes")
 
         elif msg_type == "enter":
             await self._send_keystroke("return")
@@ -262,53 +267,13 @@ class Daemon:
                 )
 
     async def _send_ctrl_c(self):
-        script = """
-        tell application "System Events"
-            key code 8 using {control down}
-        end tell
-        """
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-        except Exception as e:
-            log.error("Ctrl+C error: %s", e)
+        await self._input.send_ctrl_c()
 
     async def _send_keystroke(self, key: str):
-        script = f"""
-        tell application "System Events"
-            key code {_key_code(key)}
-        end tell
-        """
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-        except Exception as e:
-            log.error("Keystroke error: %s", e)
+        await self._input.send_keystroke(key)
 
     async def _send_to_claude(self, text: str):
-        script = f"""
-        tell application "System Events"
-            keystroke "{_escape_applescript(text)}"
-            key code 36
-        end tell
-        """
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-        except Exception as e:
-            log.error("Send to Claude error: %s", e)
+        await self._input.send_text(text)
 
     async def run(self):
         await self._dictation.discover()
@@ -332,16 +297,3 @@ class Daemon:
             await self.ipc.stop()
 
 
-def _key_code(key: str) -> int:
-    codes = {
-        "return": 36,
-        "escape": 53,
-        "down": 125,
-        "tab": 48,
-        "backspace": 51,
-    }
-    return codes.get(key, 36)
-
-
-def _escape_applescript(text: str) -> str:
-    return text.replace("\\", "\\\\").replace('"', '\\"')

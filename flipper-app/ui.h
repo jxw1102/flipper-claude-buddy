@@ -28,6 +28,7 @@ typedef enum {
     UiEventBackspace,    // short-press Back: send backspace
     UiEventInterrupt,    // long-press Left: send Ctrl+C interrupt
     UiEventToggleMute,   // long-press Down: toggle sound mute
+    UiEventYes,          // long-press Ok: type "yes" + enter
 } UiEventType;
 
 typedef enum {

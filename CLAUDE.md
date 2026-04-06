@@ -30,7 +30,7 @@ python3 -m bridge --transport ble   # BLE only
 python3 -m bridge --transport usb   # USB only
 
 # Key environment overrides
-FLIPPER_BT_NAME="Flip"            # BLE device name prefix
+FLIPPER_BT_NAME="Flipper"          # BLE device name prefix
 FLIPPER_TRANSPORT=ble              # force BLE
 FLIPPER_LOG_LEVEL=debug            # verbose logs
 ```
@@ -86,7 +86,6 @@ The Flipper sends `hello` on the first received `ping` (from the GUI thread), no
 
 ## BLE Transport Details
 
-- Service UUID: `8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000`
 - RX (Flipper→host, notify): `19ed82ae-ed21-4c9d-4145-228e61fe0000`
 - TX (host→Flipper, write): `19ed82ae-ed21-4c9d-4145-228e62fe0000`
 - Host writes with `response=False` (write-without-response), chunk size capped to `negotiated_mtu - 3`

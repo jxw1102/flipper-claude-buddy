@@ -23,6 +23,7 @@ typedef enum {
     MsgTypeVoice,
     MsgTypeHello,
     MsgTypePong,
+    MsgTypeYes,
 } MsgType;
 
 typedef struct {
@@ -49,3 +50,4 @@ int protocol_build_pong(char* buf, int buf_size);
 int protocol_build_perm_resp(char* buf, int buf_size, bool allow, bool always, bool esc);
 int protocol_build_interrupt(char* buf, int buf_size);
 int protocol_build_backspace(char* buf, int buf_size);
+int protocol_build_yes(char* buf, int buf_size);

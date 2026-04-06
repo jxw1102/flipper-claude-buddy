@@ -193,7 +193,7 @@ static void process_message(App* app, ProtocolMessage* msg) {
         ui_set_pose(app->ui, PoseThinking);
         ui_show_status2(
                 app->ui,
-                msg->text[0] ? msg->text : "Working...",
+                msg->text[0] ? msg->text : "Thinking...",
                 msg->text2[0] ? msg->text2 : NULL,
                 true);
         break;
@@ -362,6 +362,12 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), false, false, true);
         transport_send(app->transport, app->tx_buf, len);
         ui_back_to_status(app->ui);
+        break;
+
+    case UiEventYes:
+        app_notify(app, SoundCmd);
+        len = protocol_build_yes(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
         break;
 
     case UiEventExitApp:

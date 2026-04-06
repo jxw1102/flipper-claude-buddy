@@ -33,9 +33,6 @@ DICTATION_STOP_CMD = os.environ.get("FLIPPER_DICTATION_STOP_CMD", "")
 # presses UP again (manual toggle mode).
 DICTATION_CHECK_CMD = os.environ.get("FLIPPER_DICTATION_CHECK_CMD", "")
 
-# Label shown on Flipper display when dictation starts (max ~21 chars)
-DICTATION_DISPLAY_NAME = os.environ.get("FLIPPER_DICTATION_NAME", "Start Dictation")
-
 # Transport selection: "auto" (default), "usb", or "ble"
 # "auto" tries USB first, then BLE — matching Flipper app behaviour.
 TRANSPORT = os.environ.get("FLIPPER_TRANSPORT", "auto")
@@ -45,13 +42,14 @@ _plugin_data = os.environ.get("FLIPPER_PLUGIN_DATA", "")
 BT_NAME_CACHE = os.path.join(_plugin_data, "bt_name") if _plugin_data else ""
 
 # Bluetooth settings (used when TRANSPORT="ble")
-# 0xFEAF — the 16-bit service UUID Flipper advertises in every advertisement
-# packet regardless of firmware variant or device name.  Used as the primary
-# scan filter so the bridge finds the Flipper even when it has been renamed.
-FLIPPER_ADV_UUID = "0000feaf-0000-1000-8000-00805f9b34fb"
+# 0x3082 — the 16-bit service UUID Flipper advertises in every advertisement
+# packet (observed on both official and Momentum firmware).
+# Used as the primary scan filter so the bridge finds the Flipper even when
+# it has been renamed.
+FLIPPER_ADV_UUID = "00003082-0000-1000-8000-00805f9b34fb"
 # BT_DEVICE_NAME is a fallback for the rare case where the advertisement
 # does not include service UUIDs (e.g. OS-level advertisement caching).
-BT_DEVICE_NAME   = os.environ.get("FLIPPER_BT_NAME", "Flip")
+BT_DEVICE_NAME   = os.environ.get("FLIPPER_BT_NAME", "Flipper")
 BT_SCAN_TIMEOUT  = float(os.environ.get("FLIPPER_BT_SCAN_TIMEOUT", "10"))
 BT_WRITE_CHUNK   = 128  # max bytes per BLE write; capped to negotiated MTU-3 at runtime
 
