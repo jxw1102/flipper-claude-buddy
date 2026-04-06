@@ -48,16 +48,29 @@ class BtTransport(Transport):
             log.error("BT transport requires bleak:  pip install bleak")
             return False
 
-        log.info("BT: scanning for %r (timeout %.0fs)…",
-                 config.BT_DEVICE_NAME, config.BT_SCAN_TIMEOUT)
+        adv_uuid = config.FLIPPER_ADV_UUID.lower()
+        name_prefix = config.BT_DEVICE_NAME
+
+        def _is_flipper(device, adv_data) -> bool:
+            # Primary: 0xFEAF is broadcast in every Flipper advertisement packet.
+            if adv_uuid in [u.lower() for u in adv_data.service_uuids]:
+                return True
+            # Fallback: name prefix, for OS-level ad caches that strip service UUIDs.
+            return bool(name_prefix and device.name and device.name.startswith(name_prefix))
+
+        log.info(
+            "BT: scanning for Flipper (UUID %s or name prefix %r, timeout %.0fs)…",
+            config.FLIPPER_ADV_UUID, name_prefix, config.BT_SCAN_TIMEOUT,
+        )
         device = await BleakScanner.find_device_by_filter(
-            lambda d, _: bool(d.name and d.name.startswith(config.BT_DEVICE_NAME)),
+            _is_flipper,
             timeout=config.BT_SCAN_TIMEOUT,
         )
         if device is None:
             log.warning("BT: Flipper not found — is Bluetooth enabled and advertising?")
             return False
 
+        log.info("BT: found %s (%s)", device.name, device.address)
         self._client = BleakClient(device, disconnected_callback=self._on_disconnect)
         try:
             await self._client.connect()
