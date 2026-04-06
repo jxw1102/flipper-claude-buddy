@@ -11,6 +11,13 @@ if [ ! -S "$SOCKET" ]; then
     exit 0
 fi
 
+# Skip "Turn complete" if a direct Flipper notify was sent this turn
+SKIP_FLAG="/tmp/claude-flipper-skip-stop.flag"
+if [ -f "$SKIP_FLAG" ]; then
+    rm -f "$SKIP_FLAG" "$STATS"
+    exit 0
+fi
+
 # Read hook payload from stdin
 PAYLOAD=$(cat)
 

@@ -162,6 +162,11 @@ static void process_message(App* app, ProtocolMessage* msg) {
             } else {
                 ui_show_status(app->ui, msg->text, true);
             }
+            if(app->is_working) {
+                notify_play(app->notifications, SoundLedWorking, LedStateOff);
+            } else {
+                notify_play(app->notifications, SoundLedOff, LedStateOff);
+            }
         }
         break;
     }

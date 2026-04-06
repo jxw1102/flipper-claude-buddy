@@ -67,6 +67,18 @@ def main():
 
     tool_name = hook_input.get("tool_name", "")
 
+    # Skip notification for Bash commands that write to the Flipper socket directly
+    # (e.g. the flipper-notify skill) — they already set their own display.
+    # Also flag the stop hook to skip "Turn complete" for this turn.
+    if tool_name == "Bash":
+        cmd = hook_input.get("tool_input", {}).get("command", "")
+        if SOCKET_PATH in cmd:
+            try:
+                open("/tmp/claude-flipper-skip-stop.flag", "w").close()
+            except Exception:
+                pass
+            sys.exit(0)
+
     # Track tool usage stats for the Stop hook summary
     try:
         stats = json.loads(open(STATS_PATH).read()) if os.path.exists(STATS_PATH) else {}
