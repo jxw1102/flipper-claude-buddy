@@ -1,0 +1,31 @@
+{
+  "name": "flipper-claude-buddy",
+  "description": "Flipper Zero as a physical remote control and feedback device for Claude Code. Provides sound, vibration, and display feedback on a Flipper Zero connected via USB or BLE.",
+  "version": "0.1.0",
+  "author": {
+    "name": "jxw1102"
+  },
+  "repository": "https://github.com/jxw1102/flipper-claude-buddy",
+  "license": "MIT",
+  "keywords": [
+    "flipper-zero",
+    "claude-code",
+    "vibe-coding",
+    "notifications",
+    "remote-control"
+  ],
+  "userConfig": {
+    "serial_port": {
+      "description": "Serial port for Flipper Zero USB (leave empty for auto-detect, e.g. /dev/cu.usbmodemXXXX)",
+      "sensitive": false
+    },
+    "transport": {
+      "description": "Transport to use: 'auto' (default, tries USB then BLE), 'usb', or 'ble'",
+      "sensitive": false
+    },
+    "bluetoothName": {
+      "description": "Flipper Zero BLE device name prefix (required for BLE — shown in Flipper mobile app, e.g. 'Flip')",
+      "sensitive": false
+    }
+  }
+}

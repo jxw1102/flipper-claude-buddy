@@ -1,0 +1,20 @@
+App(
+    appid="claude_buddy",
+    name="Claude Buddy",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="claude_buddy_app",
+    requires=["gui", "notification", "bt"],
+    stack_size=4 * 1024,
+    fap_version="0.1",
+    fap_icon="icons/claude_10x10.png",
+    fap_category="USB",
+    fap_description="Claude Code companion - physical remote control with audio feedback",
+    sources=[
+        "claude_buddy.c",
+        "protocol.c",
+        "serial.c",        # USB transport (transport_usb_alloc)
+        "transport_bt.c",  # BT transport  (transport_bt_alloc)
+        "ui.c",
+        "notifications.c",
+    ],
+)
