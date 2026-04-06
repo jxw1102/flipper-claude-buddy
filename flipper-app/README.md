@@ -31,13 +31,12 @@ It gives you haptic, audio, and LED feedback for important Claude events, and le
 
 ## Usage
 
-1. Install and launch `Claude Buddy` on your Flipper Zero.
+1. Install and launch Claude Buddy on your Flipper Zero.
 2. Install the companion Claude Code plugin using:
 
-	```bash
-	claude plugin marketplace add jxw1102/flipper-claude-buddy
-	claude plugin install flipper-claude-buddy@flipper-claude-buddy
-	```
+    (bash)
+    claude plugin marketplace add jxw1102/flipper-claude-buddy
+    claude plugin install flipper-claude-buddy@flipper-claude-buddy
 3. Start a Claude Code session.
 4. Use the Flipper to monitor Claude activity and trigger common actions.
 
