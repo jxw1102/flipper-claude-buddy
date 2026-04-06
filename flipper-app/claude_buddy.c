@@ -53,12 +53,8 @@ typedef struct {
 // Play a sound unless muted. Interrupt/mute toggle always plays regardless.
 static void app_notify(App* app, SoundType snd) {
     if(!app || !app->notifications) return;
-    if(app->is_working) {
-        if(snd == SoundEnter) snd = SoundEnterWorking;
-        else if(snd == SoundEsc) snd = SoundEscWorking;
-        else if(snd == SoundCmd) snd = SoundCmdWorking;
-    }
-    if(!app->muted) notify_play(app->notifications, snd, false);
+    if(!app->muted) notify_play(app->notifications, snd,
+        app->is_working ? LedStateWorking : LedStateOff);
 }
 
 /* ── Transport auto-detection ─────────────────────────────────── */
@@ -137,13 +133,12 @@ static void process_message(App* app, ProtocolMessage* msg) {
                          snd == SoundVoiceStop || snd == SoundVoiceStopQuiet);
 
         // Non-LED sounds clear the working state (turn complete, error, interrupt, etc.)
-        if(snd != SoundLedWorking && snd != SoundAlert && snd != SoundAlertWorking) {
+        if(snd != SoundLedWorking && snd != SoundAlert) {
             app->is_working = false;
         }
 
-        // Alert uses a working variant when blue LED is active, so it returns to blue
-        SoundType play_snd = (snd == SoundAlert && app->is_working) ? SoundAlertWorking : snd;
-        if(!app->muted) notify_play(app->notifications, play_snd, msg->vibro);
+        if(!app->muted) notify_play(app->notifications, snd,
+            app->is_working ? LedStateWorking : LedStateOff);
 
         if(snd == SoundVoiceStart || snd == SoundVoiceStartLed) {
             app->dictating = true;
@@ -189,7 +184,7 @@ static void process_message(App* app, ProtocolMessage* msg) {
 
     case MsgTypeStatus:
         app->is_working = true;
-        notify_play(app->notifications, SoundLedWorking, false); // LED-only, not subject to mute
+        notify_play(app->notifications, SoundLedWorking, LedStateOff); // LED-only, not subject to mute
         ui_set_pose(app->ui, PoseThinking);
         ui_show_status2(
                 app->ui,
@@ -206,7 +201,7 @@ static void process_message(App* app, ProtocolMessage* msg) {
 
     case MsgTypePerm:
         // Permission always plays its alert sound (backlight + vibro) even when muted
-        notify_play(app->notifications, SoundPerm, true);
+        notify_play(app->notifications, SoundPerm, LedStateOff);
         ui_show_permission(app->ui, msg->text, msg->text2);
         break;
 
@@ -249,7 +244,7 @@ static bool on_custom_event(void* context, uint32_t event) {
         ui_set_transport_mode(app->ui, true);
         transport_start(app->transport, on_serial_data, app);
 
-        notify_play(app->notifications, SoundConnect, false);
+        notify_play(app->notifications, SoundConnect, LedStateOff);
         return true;
     }
     return false;
@@ -288,7 +283,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
 
     case UiEventInterrupt:
         // Long-press Left: send Ctrl+C to host (always audible, bypasses mute)
-        notify_play(app->notifications, SoundAlert, false);
+        notify_play(app->notifications, SoundAlert, LedStateOff);
         ui_set_pose(app->ui, PoseAlert);
         app->is_working = false;
         len = protocol_build_interrupt(app->tx_buf, sizeof(app->tx_buf));
@@ -299,7 +294,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         // Long-press Down: toggle mute (the toggle sound itself always plays)
         app->muted = !app->muted;
         ui_set_muted(app->ui, app->muted);
-        notify_play(app->notifications, app->muted ? SoundMuteOn : SoundMuteOff, false);
+        notify_play(app->notifications, app->muted ? SoundMuteOn : SoundMuteOff, LedStateOff);
         break;
 
     case UiEventVoice:
@@ -333,7 +328,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventPermAllow:
-        notify_play(app->notifications, SoundLedOff, false);
+        notify_play(app->notifications, SoundLedOff, LedStateOff);
         app_notify(app, SoundSuccess);
         len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), true, false, false);
         transport_send(app->transport, app->tx_buf, len);
@@ -341,7 +336,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventPermAlways:
-        notify_play(app->notifications, SoundLedOff, false);
+        notify_play(app->notifications, SoundLedOff, LedStateOff);
         app_notify(app, SoundSuccess);
         len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), true, true, false);
         transport_send(app->transport, app->tx_buf, len);
@@ -349,7 +344,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventPermDeny:
-        notify_play(app->notifications, SoundLedOff, false);
+        notify_play(app->notifications, SoundLedOff, LedStateOff);
         app_notify(app, SoundEsc);
         len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), false, false, false);
         transport_send(app->transport, app->tx_buf, len);
@@ -357,7 +352,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventPermEsc:
-        notify_play(app->notifications, SoundLedOff, false);
+        notify_play(app->notifications, SoundLedOff, LedStateOff);
         app_notify(app, SoundEsc);
         len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), false, false, true);
         transport_send(app->transport, app->tx_buf, len);
@@ -419,14 +414,14 @@ int32_t claude_buddy_app(void* p) {
     char buf[128];
     int len = protocol_build_hello(buf, sizeof(buf));
     transport_send(app->transport, buf, len);
-    notify_play(app->notifications, SoundConnect, true);
+    notify_play(app->notifications, SoundConnect, LedStateOff);
     ui_show_status(app->ui, NULL, true);
 
     /* Run event loop (blocks until ui_stop) */
     ui_run(app->ui);
 
     /* Cleanup */
-    notify_play(app->notifications, SoundDisconnect, true);
+    notify_play(app->notifications, SoundDisconnect, LedStateOff);
     furi_delay_ms(500);
 
     if(app->usb_poll_timer) {

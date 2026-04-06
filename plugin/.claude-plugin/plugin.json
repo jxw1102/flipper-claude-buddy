@@ -30,7 +30,7 @@
     "bluetoothName": {
       "title": "Bluetooth Name",
       "type": "string",
-      "description": "Flipper Zero BLE device name prefix (required for BLE — shown in Flipper mobile app, e.g. 'Flip')",
+      "description": "Flipper Zero BLE device name prefix (required for BLE — shown in Flipper mobile app, e.g. 'Flipper')",
       "sensitive": false
     }
   }

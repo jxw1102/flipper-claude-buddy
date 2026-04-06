@@ -16,6 +16,15 @@
 //   Session end   = yellow flash
 //   Ready         = cyan flash
 
+// Restore: blue solid (applied after transient flash when LedStateWorking)
+static const NotificationSequence seq_restore_working = {
+    &message_red_0,
+    &message_green_0,
+    &message_blue_255,
+    &message_do_not_reset,
+    NULL,
+};
+
 // Success: ascending C5-E5-G5 + vibro + green flash
 static const NotificationSequence seq_success = {
     &message_vibro_on,
@@ -283,7 +292,7 @@ static const NotificationSequence seq_ready = {
     NULL,
 };
 
-// LED-only sequences (no sound) for state changes via hooks
+// LED-only sequences (no sound)
 
 // Working: blue solid
 static const NotificationSequence seq_led_working = {
@@ -292,6 +301,15 @@ static const NotificationSequence seq_led_working = {
     &message_green_0,
     &message_blue_255,
     &message_do_not_reset,
+    NULL,
+};
+
+// LED off: stop blinking and release back to system
+static const NotificationSequence seq_led_off = {
+    &message_blink_stop,
+    &message_red_0,
+    &message_green_0,
+    &message_blue_0,
     NULL,
 };
 
@@ -315,107 +333,36 @@ static const NotificationSequence seq_mute_off = {
     NULL,
 };
 
-// Enter while working: cyan flash returning to blue solid
-static const NotificationSequence seq_enter_working = {
-    &message_red_0,
-    &message_green_255,
-    &message_blue_255,
-    &message_note_c5,
-    &message_delay_50,
-    &message_sound_off,
-    &message_green_0,       // drop green → RGB stays 0,0,255 = blue
-    &message_do_not_reset,
-    NULL,
+static const NotificationSequence* const sound_table[] = {
+    [SoundSuccess]        = &seq_success,
+    [SoundError]          = &seq_error,
+    [SoundAlert]          = &seq_alert,
+    [SoundVoiceRequest]   = &seq_voice_request,
+    [SoundVoiceStart]     = &seq_voice_start,
+    [SoundVoiceStartLed]  = &seq_voice_start_led,
+    [SoundVoiceStop]      = &seq_voice_stop,
+    [SoundVoiceStopQuiet] = &seq_voice_stop_quiet,
+    [SoundEsc]            = &seq_esc,
+    [SoundEnter]          = &seq_enter,
+    [SoundCmd]            = &seq_cmd,
+    [SoundPerm]           = &seq_perm,
+    [SoundConnect]        = &seq_connect,
+    [SoundDisconnect]     = &seq_disconnect,
+    [SoundLedWorking]     = &seq_led_working,
+    [SoundLedOff]         = &seq_led_off,
+    [SoundInterrupt]      = &seq_interrupt,
+    [SoundSessionEnd]     = &seq_session_end,
+    [SoundReady]          = &seq_ready,
+    [SoundMuteOn]         = &seq_mute_on,
+    [SoundMuteOff]        = &seq_mute_off,
 };
 
-// Cmd while working: cyan flash + vibro returning to blue solid
-static const NotificationSequence seq_cmd_working = {
-    &message_vibro_on,
-    &message_red_0,
-    &message_green_255,
-    &message_blue_255,
-    &message_note_c5,
-    &message_delay_50,
-    &message_sound_off,
-    &message_vibro_off,
-    &message_green_0,       // drop green → RGB stays 0,0,255 = blue
-    &message_do_not_reset,
-    NULL,
-};
-
-// Esc while working: yellow flash returning to blue solid
-static const NotificationSequence seq_esc_working = {
-    &message_red_255,
-    &message_green_255,
-    &message_blue_0,        // yellow needs blue off temporarily
-    &message_note_e5,
-    &message_delay_50,
-    &message_note_c5,
-    &message_delay_50,
-    &message_sound_off,
-    &message_red_0,
-    &message_green_0,
-    &message_blue_255,      // restore blue
-    &message_do_not_reset,
-    NULL,
-};
-
-// Alert while working: cyan flash returning to blue solid (instead of off)
-static const NotificationSequence seq_alert_working = {
-    &message_red_0,
-    &message_green_255,
-    &message_blue_255,
-    &message_note_e5,
-    &message_delay_50,
-    &message_sound_off,
-    &message_green_0,       // drop green → RGB stays 0,0,255 = blue
-    &message_do_not_reset,
-    NULL,
-};
-
-// LED off: stop blinking and release back to system
-static const NotificationSequence seq_led_off = {
-    &message_blink_stop,
-    &message_red_0,
-    &message_green_0,
-    &message_blue_0,
-    NULL,
-};
-
-void notify_play(NotificationApp* app, SoundType sound, bool vibro) {
+void notify_play(NotificationApp* app, SoundType sound, LedState restore) {
     if(!app) return;
-    (void)vibro; // vibro is embedded in sequences
-    const NotificationSequence* seq = NULL;
-
-    switch(sound) {
-    case SoundSuccess:        seq = &seq_success; break;
-    case SoundError:          seq = &seq_error; break;
-    case SoundAlert:          seq = &seq_alert; break;
-    case SoundVoiceRequest:   seq = &seq_voice_request; break;
-    case SoundVoiceStart:     seq = &seq_voice_start; break;
-    case SoundVoiceStartLed:  seq = &seq_voice_start_led; break;
-    case SoundVoiceStop:      seq = &seq_voice_stop; break;
-    case SoundVoiceStopQuiet: seq = &seq_voice_stop_quiet; break;
-    case SoundEsc:            seq = &seq_esc; break;
-    case SoundEnter:          seq = &seq_enter; break;
-    case SoundCmd:            seq = &seq_cmd; break;
-    case SoundPerm:           seq = &seq_perm; break;
-    case SoundConnect:        seq = &seq_connect; break;
-    case SoundDisconnect:     seq = &seq_disconnect; break;
-    case SoundLedWorking:     seq = &seq_led_working; break;
-    case SoundLedOff:         seq = &seq_led_off; break;
-    case SoundInterrupt:      seq = &seq_interrupt; break;
-    case SoundSessionEnd:     seq = &seq_session_end; break;
-    case SoundReady:          seq = &seq_ready; break;
-    case SoundMuteOn:         seq = &seq_mute_on; break;
-    case SoundMuteOff:        seq = &seq_mute_off; break;
-    case SoundAlertWorking:   seq = &seq_alert_working; break;
-    case SoundEnterWorking:   seq = &seq_enter_working; break;
-    case SoundEscWorking:     seq = &seq_esc_working; break;
-    case SoundCmdWorking:     seq = &seq_cmd_working; break;
-    }
-
-    if(seq) {
-        notification_message(app, seq);
+    if((size_t)sound >= sizeof(sound_table) / sizeof(sound_table[0])) return;
+    const NotificationSequence* seq = sound_table[sound];
+    if(seq) notification_message(app, seq);
+    if(restore == LedStateWorking) {
+        notification_message(app, &seq_restore_working);
     }
 }

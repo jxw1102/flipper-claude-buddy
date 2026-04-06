@@ -30,3 +30,4 @@ class Transport(ABC):
     @abstractmethod
     def is_closing(self) -> bool:
         """True when the underlying connection has been lost or is closing."""
+

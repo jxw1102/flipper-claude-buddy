@@ -1,8 +1,10 @@
 """Main daemon: routes messages between Flipper serial and Claude Code IPC."""
 
 import asyncio
+import json
 import logging
 import os
+from pathlib import Path
 from . import config, protocol
 from .claude_ipc import ClaudeIPC
 from .serial_conn import SerialConnection
@@ -43,12 +45,14 @@ class Daemon:
                     log.info("Cached BT name: %s", bt_name)
                 except Exception as e:
                     log.warning("Failed to cache BT name: %s", e)
+            if bt_name:
+                _save_bt_name_to_plugin_config(bt_name)
             # Flipper app just (re)started — cancel any pending permission request
             if self._perm_future and not self._perm_future.done():
                 log.info("Cancelling stale permission request")
                 self._perm_future.set_result(None)
             await self.serial.send(
-                protocol.notify_msg("ready", vibro=True, text="Flipper", subtext="Hello")
+                protocol.notify_msg("ready", vibro=True, text="Claude Code", subtext="Connected")
             )
             # Restore Claude state if already connected
             if self._claude_connected:
@@ -96,15 +100,13 @@ class Daemon:
                     )
                     log.info("Dictation stopped")
                 else:
-                    # Send Tab (amend) then start dictation
-                    await self._send_keystroke("tab")
                     await self._dictation.start()
                     self._dictating = True
                     # Button already played sound+vibro locally; just start LED blink
                     await self.serial.send(
                         protocol.notify_msg("voice_start_led", vibro=False, text="")
                     )
-                    log.info("Tab + dictation started")
+                    log.info("Dictation started")
             except Exception as e:
                 log.error("Voice handler error: %s", e)
                 await self.serial.send(protocol.status_msg("", ""))
@@ -166,9 +168,9 @@ class Daemon:
 
         elif action == "dismiss_permission":
             if self._perm_future and not self._perm_future.done():
-                log.info("Dismissing pending permission (approved elsewhere)")
-                self._perm_future.set_result({"allow": True, "always": False})
-            await self.serial.send(protocol.status_msg("", ""))
+                log.info("Dismissing pending permission (deferring to Claude)")
+                self._perm_future.set_result({"ask": True})
+            await self.serial.send(protocol.notify_msg("led_off", vibro=False, text=""))
             return {"status": "ok"}
 
         elif action == "permission_request":
@@ -198,6 +200,9 @@ class Daemon:
                 if result is None:
                     log.info("Permission cancelled (Flipper reset)")
                     return {"status": "no_flipper"}
+                if result.get("ask"):
+                    log.info("Permission dismissed — deferring to Claude")
+                    return {"status": "ask"}
                 log.info("Permission result: %s", result)
                 return {
                     "status": "ok",
@@ -295,5 +300,26 @@ class Daemon:
         finally:
             self.serial.close()
             await self.ipc.stop()
+
+
+def _save_bt_name_to_plugin_config(bt_name: str) -> None:
+    """Persist bt_name into ~/.claude/settings.json as the bluetoothName userConfig.
+
+    Only called when connected via USB so the Flipper's own reported name is
+    authoritative. On the next BLE-only session the bridge reads this value
+    and scans for the correct device without any manual configuration.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    try:
+        settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+        plugin_cfg = settings.setdefault("pluginConfigs", {}).setdefault("flipper-claude-buddy", {})
+        options = plugin_cfg.setdefault("options", {})
+        if options.get("bluetoothName") == bt_name:
+            return  # already up to date, skip the write
+        options["bluetoothName"] = bt_name
+        settings_path.write_text(json.dumps(settings, indent=2))
+        log.info("Saved bluetoothName=%r to plugin config", bt_name)
+    except Exception as e:
+        log.warning("Failed to save bluetoothName to plugin config: %s", e)
 
 

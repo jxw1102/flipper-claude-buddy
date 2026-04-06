@@ -65,8 +65,20 @@ def main():
         # Bridge error — fall back to normal permission dialog
         sys.exit(1)
 
+    status = result.get("status")
+
+    # Dismissed on Flipper — defer to Claude's normal permission dialog
+    if status == "ask":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "ask"},
+            }
+        }))
+        sys.exit(0)
+
     # Only act on explicit user decisions from Flipper
-    if result.get("status") != "ok":
+    if status != "ok":
         # no_flipper, timeout, busy, error — fall back to normal dialog
         sys.exit(1)
 
