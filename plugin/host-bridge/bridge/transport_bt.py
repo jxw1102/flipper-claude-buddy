@@ -141,6 +141,20 @@ class BtTransport(Transport):
     async def drain(self) -> None:
         pass  # BLE writes are already awaited
 
+    async def get_rssi(self) -> int | None:
+        if not self._client or not self._client.is_connected:
+            return None
+
+        backend = getattr(self._client, "_backend", None)
+        if backend is None or not hasattr(backend, "get_rssi"):
+            return None
+
+        try:
+            return int(await backend.get_rssi())
+        except Exception as e:
+            log.debug("BT: RSSI read failed: %s", e)
+            return None
+
     def close(self) -> None:
         self._closed = True
         self._rx_event.set()  # unblock any waiting readline()

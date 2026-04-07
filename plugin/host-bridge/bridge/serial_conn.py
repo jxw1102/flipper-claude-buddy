@@ -63,6 +63,9 @@ class SerialConnection:
             log.error("Serial write error: %s", e)
             self._mark_disconnected()
 
+    async def send_ping(self) -> None:
+        await self.send(protocol.ping_msg(await self._transport.get_rssi()))
+
     # ── Read loop ──────────────────────────────────────────────────
 
     async def read_loop(self):
@@ -93,7 +96,7 @@ class SerialConnection:
         while self.connected:
             await asyncio.sleep(config.PING_INTERVAL)
             if self.connected:
-                await self.send(protocol.ping_msg())
+                await self.send_ping()
 
     # ── Reconnect loop ─────────────────────────────────────────────
 

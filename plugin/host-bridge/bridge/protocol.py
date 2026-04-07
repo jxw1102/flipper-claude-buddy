@@ -4,7 +4,6 @@ import json
 import time
 import uuid
 
-
 def make_id() -> str:
     return uuid.uuid4().hex[:8]
 
@@ -49,8 +48,11 @@ def status_msg(line1: str, line2: str = "") -> bytes:
     return encode("status", d)
 
 
-def ping_msg() -> bytes:
-    return encode("ping")
+def ping_msg(rssi: int | None = None) -> bytes:
+    d: dict[str, int] = {}
+    if rssi is not None:
+        d["rssi"] = int(rssi)
+    return encode("ping", d)
 
 
 def menu_msg(items: list[str]) -> bytes:

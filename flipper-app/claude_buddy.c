@@ -173,6 +173,11 @@ static void process_message(App* app, ProtocolMessage* msg) {
 
     case MsgTypePing: {
         int len;
+        if(msg->has_rssi) {
+            ui_set_rssi(app->ui, msg->rssi);
+        } else {
+            ui_set_rssi(app->ui, 0);
+        }
         /* Send hello once per connection (first received ping triggers it).
          * This was previously done in the BLE RX callback, but calling
          * ble_profile_serial_tx from inside that callback deadlocks on

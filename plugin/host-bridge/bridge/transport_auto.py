@@ -47,6 +47,11 @@ class AutoTransport(Transport):
     async def drain(self) -> None:
         await self._active.drain()
 
+    async def get_rssi(self) -> int | None:
+        if self._active is None:
+            return None
+        return await self._active.get_rssi()
+
     def close(self) -> None:
         if self._active:
             self._active.close()

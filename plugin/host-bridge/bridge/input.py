@@ -11,11 +11,9 @@ Call ``create_backend()`` to obtain the configured backend instance.
 """
 
 import asyncio
-import ctypes
 import logging
 import sys
 from abc import ABC, abstractmethod
-from ctypes.util import find_library
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -44,13 +42,8 @@ class InputBackend(ABC):
         """Type *text* and press Return in the focused application."""
 
     @abstractmethod
-    async def send_key_down(self, key: str) -> None:
-        """Press and hold a named key without releasing it."""
-
-    @abstractmethod
-    async def send_key_up(self, key: str) -> None:
-        """Release a previously held named key."""
-
+    async def send_chars(self, text: str, *, focus: bool = True) -> None:
+        """Type text without pressing Return."""
 
 # ---------------------------------------------------------------------------
 # macOS AppleScript backend
@@ -216,45 +209,24 @@ def _build_send_text_script(text: str, target: InputTarget | None = None) -> str
     return "\n".join(lines)
 
 
-_application_services = None
-
-
-def _load_application_services():
-    global _application_services
-    if _application_services is not None:
-        return _application_services
-    if sys.platform != "darwin":
-        return None
-
-    lib_path = find_library("ApplicationServices")
-    if not lib_path:
-        log.warning("ApplicationServices framework not found")
-        return None
-
-    lib = ctypes.CDLL(lib_path)
-    lib.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
-    lib.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
-    lib.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
-    lib.CGEventPost.restype = None
-    lib.CFRelease.argtypes = [ctypes.c_void_p]
-    lib.CFRelease.restype = None
-    _application_services = lib
-    return lib
-
-
-def _post_key_event(key: str, is_key_down: bool) -> bool:
-    lib = _load_application_services()
-    if lib is None:
-        return False
-
-    event = lib.CGEventCreateKeyboardEvent(None, _key_code(key), is_key_down)
-    if not event:
-        return False
-    try:
-        lib.CGEventPost(0, event)
-        return True
-    finally:
-        lib.CFRelease(event)
+def _build_send_chars_script(
+    text: str,
+    target: InputTarget | None = None,
+    *,
+    focus: bool = True,
+) -> str:
+    lines = []
+    focus_script = _focus_script(target) if focus else ""
+    if focus_script:
+        lines.append(focus_script.rstrip())
+    lines.extend(
+        [
+            'tell application "System Events"',
+            f'    keystroke "{_escape_applescript(text)}"',
+            "end tell",
+        ]
+    )
+    return "\n".join(lines)
 
 
 async def _run_applescript(script: str, context: str) -> None:
@@ -277,7 +249,6 @@ class AppleScriptInputBackend(InputBackend):
 
     def __init__(self) -> None:
         self._target: InputTarget | None = None
-        self._held_keys: set[str] = set()
 
     def set_target(self, target: dict[str, str] | None) -> None:
         self._target = InputTarget.from_payload(target)
@@ -304,24 +275,11 @@ class AppleScriptInputBackend(InputBackend):
             "send_text",
         )
 
-    async def send_key_down(self, key: str) -> None:
-        if key in self._held_keys:
-            return
-        focus = _focus_script(self._target)
-        if focus:
-            await _run_applescript(focus, f"focus({key})")
-        if not _post_key_event(key, True):
-            log.warning("key_down(%s) failed", key)
-            return
-        self._held_keys.add(key)
-
-    async def send_key_up(self, key: str) -> None:
-        if key not in self._held_keys:
-            return
-        if not _post_key_event(key, False):
-            log.warning("key_up(%s) failed", key)
-            return
-        self._held_keys.discard(key)
+    async def send_chars(self, text: str, *, focus: bool = True) -> None:
+        await _run_applescript(
+            _build_send_chars_script(text, target=self._target, focus=focus),
+            "send_chars",
+        )
 
 
 # ---------------------------------------------------------------------------

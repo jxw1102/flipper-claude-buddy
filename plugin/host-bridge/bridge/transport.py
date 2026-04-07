@@ -31,3 +31,6 @@ class Transport(ABC):
     def is_closing(self) -> bool:
         """True when the underlying connection has been lost or is closing."""
 
+    async def get_rssi(self) -> int | None:
+        """Return link RSSI in dBm when the transport can provide it."""
+        return None

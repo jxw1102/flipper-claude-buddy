@@ -101,5 +101,6 @@ void ui_update_menu(UiState* ui, const char* pipe_delimited);
 void ui_show_permission(UiState* ui, const char* tool, const char* detail);
 void ui_back_to_status(UiState* ui);
 void ui_set_muted(UiState* ui, bool muted);
+void ui_set_rssi(UiState* ui, int rssi);
 void ui_run(UiState* ui);
 void ui_stop(UiState* ui);

@@ -1,31 +1,5 @@
-#include <furi_hal_rtc.h>
-#include <storage/storage.h>
-
-#define RSSI_LOG_PATH "/ext/rssi_log.txt"
-
-static void log_rssi(float rssi, int bars) {
-    DateTime dt;
-    furi_hal_rtc_get_datetime(&dt);
-    char line[64];
-    int len = snprintf(
-        line, sizeof(line), "%02lu:%02lu:%02lu RSSI=%.1f bars=%d\n",
-        (unsigned long)dt.hour,
-        (unsigned long)dt.minute,
-        (unsigned long)dt.second,
-        (double)rssi,
-        bars);
-    Storage* storage = furi_record_open("storage");
-    File* f = storage_file_alloc(storage);
-    if(storage_file_open(f, RSSI_LOG_PATH, FSAM_WRITE, FSOM_OPEN_APPEND)) {
-        storage_file_write(f, line, len);
-        storage_file_close(f);
-    }
-    storage_file_free(f);
-    furi_record_close("storage");
-}
 #include "ui.h"
 #include <gui/elements.h>
-#include <furi_hal_bt.h>
 #include <string.h>
 
 // Default slash commands (shown until bridge sends an updated list)
@@ -77,22 +51,6 @@ static void anim_tick(void* context) {
        sm->anim_frame > 20) {
         sm->pose = PoseIdle;
         sm->anim_frame = 0;
-    }
-    // Update BLE RSSI bars every ~1s (7 frames × 150ms)
-    if(sm->anim_frame % 7 == 0) {
-        if(sm->transport_mode == 1 && sm->connected) {
-            float rssi = furi_hal_bt_get_rssi();
-            int bars = 0;
-            if(rssi > -65.0f)      bars = 4;
-            else if(rssi > -75.0f) bars = 3;
-            else if(rssi > -85.0f) bars = 2;
-            else if(rssi > -90.0f) bars = 1;
-            else                   bars = 0;
-            sm->rssi_bars = bars;
-            log_rssi(rssi, bars);
-        } else {
-            sm->rssi_bars = 0;
-        }
     }
     view_commit_model(ui->status_view, true);
 
@@ -202,6 +160,14 @@ static void draw_sparkle(Canvas* canvas, int x, int y) {
     canvas_draw_dot(canvas, x + 1, y);
     canvas_draw_dot(canvas, x, y - 1);
     canvas_draw_dot(canvas, x, y + 1);
+}
+
+static uint8_t rssi_to_bars(int rssi) {
+    if(rssi > -65) return 4;
+    if(rssi > -75) return 3;
+    if(rssi > -85) return 2;
+    if(rssi > -90) return 1;
+    return 0;
 }
 
 static void draw_claude(Canvas* canvas, int cx, int cy, uint8_t pose, uint8_t frame) {
@@ -885,6 +851,20 @@ void ui_set_transport_mode(UiState* ui, bool is_bt) {
     if(!ui) return;
     StatusModel* m = view_get_model(ui->status_view);
     m->transport_mode = is_bt ? 1 : 0;
+    if(!is_bt) {
+        m->rssi_bars = 0;
+    }
+    view_commit_model(ui->status_view, true);
+}
+
+void ui_set_rssi(UiState* ui, int rssi) {
+    if(!ui) return;
+    StatusModel* m = view_get_model(ui->status_view);
+    if(m->transport_mode != 1) {
+        m->rssi_bars = 0;
+    } else {
+        m->rssi_bars = rssi_to_bars(rssi);
+    }
     view_commit_model(ui->status_view, true);
 }
 
@@ -921,7 +901,7 @@ void ui_update_menu(UiState* ui, const char* pipe_delimited) {
         p = sep + 1;
     }
 
-    view_commit_model(ui->menu_view, false);
+    view_commit_model(ui->menu_view, true);
 }
 
 void ui_show_permission(UiState* ui, const char* tool, const char* detail) {

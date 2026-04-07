@@ -1,6 +1,7 @@
 #include "protocol.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <furi_hal_version.h>
 
 // Minimal JSON field extraction (no external dependency, fixed buffers)
@@ -37,6 +38,21 @@ static bool json_get_bool(const char* json, const char* key, bool* out) {
         return true;
     }
     return false;
+}
+
+static bool json_get_int(const char* json, const char* key, int* out) {
+    if(!json || !key || !out) return false;
+    char pattern[80];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char* start = strstr(json, pattern);
+    if(!start) return false;
+    start += strlen(pattern);
+    while(*start == ' ') start++;
+    char* end = NULL;
+    long value = strtol(start, &end, 10);
+    if(end == start) return false;
+    *out = (int)value;
+    return true;
 }
 
 static MsgType parse_type(const char* type_str) {
@@ -89,6 +105,13 @@ bool protocol_parse(const char* json_line, ProtocolMessage* msg) {
         json_get_string(d_start, "detail", msg->text2, sizeof(msg->text2));
         break;
     case MsgTypePing:
+        {
+            int rssi = 0;
+            if(json_get_int(d_start, "rssi", &rssi)) {
+                msg->has_rssi = true;
+                msg->rssi = (int16_t)rssi;
+            }
+        }
         break;
     default:
         break;

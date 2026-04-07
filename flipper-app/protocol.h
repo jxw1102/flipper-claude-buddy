@@ -5,7 +5,6 @@
 
 #define PROTOCOL_MAX_MSG_LEN 512
 #define PROTOCOL_MAX_FIELD_LEN 64
-
 typedef enum {
     MsgTypeUnknown = 0,
     // Host -> Flipper
@@ -36,6 +35,8 @@ typedef struct {
     char text2[PROTOCOL_MAX_FIELD_LEN];  // line2 (subtext)
     char menu_data[512]; // pipe-delimited menu items
     bool claude_connected; // claude code session state
+    bool has_rssi;
+    int16_t rssi;
 } ProtocolMessage;
 
 // Parse a JSON line into a ProtocolMessage. Returns true on success.

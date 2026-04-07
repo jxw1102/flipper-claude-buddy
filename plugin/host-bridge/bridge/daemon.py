@@ -26,7 +26,7 @@ class Daemon:
         self._claude_connected = False
         self._perm_future: asyncio.Future | None = None
         self._menu_sent = False
-        self._space_held = False
+        self._space_repeat_task: asyncio.Task | None = None
         self._session_targets: OrderedDict[str, dict[str, str]] = OrderedDict()
 
         self.serial.on_message(self._handle_flipper_msg)
@@ -118,10 +118,10 @@ class Daemon:
             await self._send_keystroke("backspace")
 
         elif msg_type == "space_down":
-            await self._set_space_held(True)
+            await self._start_space_repeat()
 
         elif msg_type == "space_up":
-            await self._set_space_held(False)
+            await self._stop_space_repeat()
 
         elif msg_type == "interrupt":
             log.info("Flipper interrupt request — sending Ctrl+C")
@@ -174,8 +174,7 @@ class Daemon:
             return {"status": "ok"}
 
         elif action == "claude_disconnect":
-            if self._space_held:
-                await self._set_space_held(False)
+            await self._stop_space_repeat()
             self._claude_connected = False
             await self.serial.send(protocol.state_msg(False))
             return {"status": "ok"}
@@ -266,7 +265,7 @@ class Daemon:
         self._menu_sent = False
         await asyncio.sleep(2.0)
         if self.serial.connected:
-            await self.serial.send(protocol.ping_msg())
+            await self.serial.send_ping()
 
     async def _dictation_sync_loop(self):
         """Poll dictation backend state and correct bridge/Flipper state on mismatch."""
@@ -297,17 +296,31 @@ class Daemon:
     async def _send_to_claude(self, text: str):
         await self._input.send_text(text)
 
-    async def _set_space_held(self, active: bool):
-        if active:
-            if self._space_held:
-                return
-            await self._input.send_key_down("space")
-            self._space_held = True
+    async def _space_repeat_loop(self):
+        first_send = True
+        try:
+            while True:
+                await self._input.send_chars(" ", focus=first_send)
+                first_send = False
+                await asyncio.sleep(config.SPACE_REPEAT_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+
+    async def _start_space_repeat(self):
+        if self._space_repeat_task is not None:
             return
-        if not self._space_held:
+        self._space_repeat_task = asyncio.create_task(self._space_repeat_loop())
+
+    async def _stop_space_repeat(self):
+        if self._space_repeat_task is None:
             return
-        await self._input.send_key_up("space")
-        self._space_held = False
+        task = self._space_repeat_task
+        self._space_repeat_task = None
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     def _normalize_target(self, request: dict) -> dict[str, str] | None:
         target = {
@@ -381,8 +394,7 @@ class Daemon:
         except asyncio.CancelledError:
             pass
         finally:
-            if self._space_held:
-                await self._set_space_held(False)
+            await self._stop_space_repeat()
             self.serial.close()
             await self.ipc.stop()
 
