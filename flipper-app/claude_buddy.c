@@ -2,7 +2,8 @@
  * Claude Buddy - Flipper Zero companion for Claude Code
  *
  * Physical remote control + audio/haptic feedback device.
- * Buttons: UP=voice, LEFT=ESC, RIGHT=menu, OK=enter, BACK(short)=dismiss, BACK(long)=exit
+ * Buttons: UP(short)=voice, UP(long)=hold Space, LEFT=ESC, RIGHT=menu,
+ * OK=enter, BACK(short)=dismiss, BACK(long)=exit
  *
  * Threading model:
  *   Serial RX callback runs on a worker thread — it must NOT call UI functions.
@@ -307,6 +308,16 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         // play the stop sound right away; otherwise signal "requesting" dictation.
         app_notify(app, app->dictating ? SoundVoiceStop : SoundVoiceRequest);
         len = protocol_build_voice(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
+    case UiEventSpaceHoldStart:
+        len = protocol_build_space_down(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
+    case UiEventSpaceHoldEnd:
+        len = protocol_build_space_up(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
 

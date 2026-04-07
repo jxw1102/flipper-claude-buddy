@@ -16,6 +16,8 @@ typedef enum {
     UiEventEsc,
     UiEventDown,
     UiEventVoice,
+    UiEventSpaceHoldStart,
+    UiEventSpaceHoldEnd,
     UiEventOpenMenu,
     UiEventMenuSelect,
     UiEventMenuBack,
@@ -82,6 +84,7 @@ typedef struct {
     UiEventCallback event_callback;
     void* event_context;
     ViewId current_view;
+    bool up_hold_active;
 } UiState;
 
 UiState* ui_alloc(Gui* gui);

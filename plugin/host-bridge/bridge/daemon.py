@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import OrderedDict
 from pathlib import Path
 from . import config, protocol
 from .claude_ipc import ClaudeIPC
@@ -25,6 +26,8 @@ class Daemon:
         self._claude_connected = False
         self._perm_future: asyncio.Future | None = None
         self._menu_sent = False
+        self._space_held = False
+        self._session_targets: OrderedDict[str, dict[str, str]] = OrderedDict()
 
         self.serial.on_message(self._handle_flipper_msg)
         self.serial.on_connect(self._send_initial_state)
@@ -114,6 +117,12 @@ class Daemon:
         elif msg_type == "backspace":
             await self._send_keystroke("backspace")
 
+        elif msg_type == "space_down":
+            await self._set_space_held(True)
+
+        elif msg_type == "space_up":
+            await self._set_space_held(False)
+
         elif msg_type == "interrupt":
             log.info("Flipper interrupt request — sending Ctrl+C")
             await self._send_ctrl_c()
@@ -165,9 +174,21 @@ class Daemon:
             return {"status": "ok"}
 
         elif action == "claude_disconnect":
+            if self._space_held:
+                await self._set_space_held(False)
             self._claude_connected = False
             await self.serial.send(protocol.state_msg(False))
             return {"status": "ok"}
+
+        elif action == "register_target":
+            session_key = self._register_target(request)
+            if not session_key:
+                return {"status": "invalid_target"}
+            return {"status": "ok", "session_key": session_key}
+
+        elif action == "release_target":
+            released = self._release_target(str(request.get("session_key", "")).strip())
+            return {"status": "ok", "released": released}
 
         elif action == "permission_request":
             tool = request.get("tool", "Tool")[:21]
@@ -215,9 +236,9 @@ class Daemon:
 
     # Built-in slash commands
     BUILTIN_COMMANDS = [
-        "/btw", "/clear", "/compact", "/model", "/effort", "/config",
-        "/usage", "/doctor", "/help", "/init", "/login", "/logout",
-        "/pr-comments", "/review", "/status",
+        "/btw", "/copy", "/export", "/clear", "/compact", "/diff", "/buddy", "/context", "/memory", "/model", "/effort", "/usage",
+        "/config", "/doctor", "/help", "/init", "/agents", "/branch", "/mcp", "/plugins", "/reload-plugins", "/resume",
+        "/pr-comments", "/review", "/status", "/loop", "/insight", "/voice"
     ]
 
     def _load_commands(self) -> list[str]:
@@ -276,6 +297,72 @@ class Daemon:
     async def _send_to_claude(self, text: str):
         await self._input.send_text(text)
 
+    async def _set_space_held(self, active: bool):
+        if active:
+            if self._space_held:
+                return
+            await self._input.send_key_down("space")
+            self._space_held = True
+            return
+        if not self._space_held:
+            return
+        await self._input.send_key_up("space")
+        self._space_held = False
+
+    def _normalize_target(self, request: dict) -> dict[str, str] | None:
+        target = {
+            "session_key": str(request.get("session_key", "")).strip(),
+            "app_name": str(request.get("app_name", "")).strip(),
+            "term_program": str(request.get("term_program", "")).strip(),
+            "term_session_id": str(request.get("term_session_id", "")).strip(),
+            "iterm_session_id": str(request.get("iterm_session_id", "")).strip(),
+            "tty": str(request.get("tty", "")).strip(),
+        }
+        if not target["session_key"]:
+            return None
+        if not any(
+            (
+                target["app_name"],
+                target["term_program"],
+                target["term_session_id"],
+                target["iterm_session_id"],
+                target["tty"],
+            )
+        ):
+            return None
+        return target
+
+    def _apply_active_target(self) -> None:
+        active = next(reversed(self._session_targets.values()), None)
+        self._input.set_target(active)
+
+    def _register_target(self, request: dict) -> str | None:
+        target = self._normalize_target(request)
+        if not target:
+            log.info("Ignoring invalid input target registration: %s", request)
+            return None
+
+        session_key = target["session_key"]
+        self._session_targets.pop(session_key, None)
+        self._session_targets[session_key] = target
+        self._apply_active_target()
+        log.info(
+            "Registered input target session=%s app=%s tty=%s",
+            session_key,
+            target["app_name"] or "?",
+            target["tty"] or "?",
+        )
+        return session_key
+
+    def _release_target(self, session_key: str) -> bool:
+        if not session_key:
+            return False
+        released = self._session_targets.pop(session_key, None) is not None
+        self._apply_active_target()
+        if released:
+            log.info("Released input target session=%s", session_key)
+        return released
+
     async def run(self):
         await self._dictation.discover()
         await self.ipc.start()
@@ -294,6 +381,8 @@ class Daemon:
         except asyncio.CancelledError:
             pass
         finally:
+            if self._space_held:
+                await self._set_space_held(False)
             self.serial.close()
             await self.ipc.stop()
 
@@ -317,5 +406,3 @@ def _save_bt_name_to_plugin_config(bt_name: str) -> None:
         log.info("Saved bluetoothName=%r to plugin config", bt_name)
     except Exception as e:
         log.warning("Failed to save bluetoothName to plugin config: %s", e)
-
-

@@ -24,6 +24,12 @@ def send_to_bridge(tool: str, detail: str) -> dict:
 
 def extract_detail(tool_name: str, tool_input: dict) -> str:
     """Extract a short detail string from the tool input."""
+    # Special handling for mcp__atlassian__searchJiraIssuesUsingJql and similar
+    if "__" in tool_name:
+        parts = tool_name.split("__")
+        if len(parts) >= 3:
+            # e.g. mcp__atlassian__searchJiraIssuesUsingJql
+            return parts[-1][:21]
     if tool_name == "Bash":
         desc = tool_input.get("description", "")
         if desc:
@@ -52,12 +58,28 @@ def main():
 
     try:
         hook_input = json.loads(sys.stdin.read())
+        with open("/tmp/claude-flipper-bridge.log", "a") as logf:
+            logf.write("[on-permission-request] hook_input:\n")
+            logf.write(json.dumps(hook_input, indent=2))
+            logf.write("\n")
     except (json.JSONDecodeError, EOFError):
         sys.exit(1)
 
-    tool_name = hook_input.get("tool_name", "Unknown")
+
+    tool_name_raw = hook_input.get("tool_name", "Unknown")
     tool_input = hook_input.get("tool_input", {})
-    detail = extract_detail(tool_name, tool_input)
+
+    # For tool_name like mcp__atlassian__searchJiraIssuesUsingJql, display as mcp_atlassian
+    if "__" in tool_name_raw:
+        parts = tool_name_raw.split("__")
+        if len(parts) >= 2:
+            tool_name = f"{parts[0]}_{parts[1]}"
+        else:
+            tool_name = tool_name_raw
+    else:
+        tool_name = tool_name_raw
+
+    detail = extract_detail(tool_name_raw, tool_input)
 
     try:
         result = send_to_bridge(tool_name, detail)

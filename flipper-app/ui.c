@@ -1,3 +1,28 @@
+#include <furi_hal_rtc.h>
+#include <storage/storage.h>
+
+#define RSSI_LOG_PATH "/ext/rssi_log.txt"
+
+static void log_rssi(float rssi, int bars) {
+    DateTime dt;
+    furi_hal_rtc_get_datetime(&dt);
+    char line[64];
+    int len = snprintf(
+        line, sizeof(line), "%02lu:%02lu:%02lu RSSI=%.1f bars=%d\n",
+        (unsigned long)dt.hour,
+        (unsigned long)dt.minute,
+        (unsigned long)dt.second,
+        (double)rssi,
+        bars);
+    Storage* storage = furi_record_open("storage");
+    File* f = storage_file_alloc(storage);
+    if(storage_file_open(f, RSSI_LOG_PATH, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+        storage_file_write(f, line, len);
+        storage_file_close(f);
+    }
+    storage_file_free(f);
+    furi_record_close("storage");
+}
 #include "ui.h"
 #include <gui/elements.h>
 #include <furi_hal_bt.h>
@@ -6,22 +31,35 @@
 // Default slash commands (shown until bridge sends an updated list)
 static const char* default_menu_items[] = {
     "/btw",
+    "/copy",
+    "/export",
     "/clear",
     "/compact",
+    "/diff",
+    "/buddy",
+    "/context",
+    "/memory",
     "/model",
     "/effort",
-    "/config",
     "/usage",
+    "/config",
     "/doctor",
     "/help",
     "/init",
-    "/login",
-    "/logout",
+    "/agents",
+    "/branch",
+    "/mcp",
+    "/plugins",
+    "/reload-plugins",
+    "/resume",
     "/pr-comments",
     "/review",
     "/status",
+    "/loop",
+    "/insight",
+    "/voice"
 };
-#define DEFAULT_MENU_COUNT 15
+#define DEFAULT_MENU_COUNT 28
 
 // ── Layout ───────────────────────────────────────────────────────
 
@@ -40,14 +78,18 @@ static void anim_tick(void* context) {
         sm->pose = PoseIdle;
         sm->anim_frame = 0;
     }
-    // Update BLE RSSI bars every ~5s (33 frames × 150ms)
-    if(sm->anim_frame % 33 == 0) {
+    // Update BLE RSSI bars every ~1s (7 frames × 150ms)
+    if(sm->anim_frame % 7 == 0) {
         if(sm->transport_mode == 1 && sm->connected) {
             float rssi = furi_hal_bt_get_rssi();
-            if(rssi > -65.0f)      sm->rssi_bars = 4;
-            else if(rssi > -75.0f) sm->rssi_bars = 3;
-            else if(rssi > -85.0f) sm->rssi_bars = 2;
-            else                   sm->rssi_bars = 1;
+            int bars = 0;
+            if(rssi > -65.0f)      bars = 4;
+            else if(rssi > -75.0f) bars = 3;
+            else if(rssi > -85.0f) bars = 2;
+            else if(rssi > -90.0f) bars = 1;
+            else                   bars = 0;
+            sm->rssi_bars = bars;
+            log_rssi(rssi, bars);
         } else {
             sm->rssi_bars = 0;
         }
@@ -427,7 +469,10 @@ static void status_draw(Canvas* canvas, void* model) {
 static bool status_input(InputEvent* event, void* context) {
     if(!event || !context) return false;
     UiState* ui = context;
-    if(event->type != InputTypeShort && event->type != InputTypeLong) return false;
+    if(
+        event->type != InputTypeShort && event->type != InputTypeLong &&
+        event->type != InputTypeRelease)
+        return false;
 
     if(event->key == InputKeyOk && event->type == InputTypeShort) {
         if(ui->event_callback) ui->event_callback(UiEventEnter, NULL, ui->event_context);
@@ -447,6 +492,20 @@ static bool status_input(InputEvent* event, void* context) {
     }
     if(event->key == InputKeyUp && event->type == InputTypeShort) {
         if(ui->event_callback) ui->event_callback(UiEventVoice, NULL, ui->event_context);
+        return true;
+    }
+    if(event->key == InputKeyUp && event->type == InputTypeLong) {
+        ui->up_hold_active = true;
+        if(ui->event_callback) {
+            ui->event_callback(UiEventSpaceHoldStart, NULL, ui->event_context);
+        }
+        return true;
+    }
+    if(event->key == InputKeyUp && event->type == InputTypeRelease && ui->up_hold_active) {
+        ui->up_hold_active = false;
+        if(ui->event_callback) {
+            ui->event_callback(UiEventSpaceHoldEnd, NULL, ui->event_context);
+        }
         return true;
     }
     if(event->key == InputKeyDown && event->type == InputTypeShort) {
@@ -816,6 +875,9 @@ void ui_set_claude_connected(UiState* ui, bool connected) {
     if(!ui) return;
     StatusModel* m = view_get_model(ui->status_view);
     m->claude_connected = connected;
+    if(!connected) {
+        m->rssi_bars = 0; // 清零信号格
+    }
     view_commit_model(ui->status_view, true);
 }
 

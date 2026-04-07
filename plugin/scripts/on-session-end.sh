@@ -25,6 +25,7 @@ if [ "$COUNT" -lt 0 ]; then COUNT=0; fi
 echo "$COUNT" > "$REFCOUNT_FILE"
 
 if [ -S "$SOCKET" ]; then
+    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/session-target.py" release_target "$SOCKET" >/dev/null 2>&1 || true
     echo '{"action":"claude_disconnect"}' \
         | nc -U "$SOCKET" 2>/dev/null || true
 fi

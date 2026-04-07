@@ -135,6 +135,14 @@ int protocol_build_voice(char* buf, int buf_size) {
     return build_simple(buf, buf_size, "voice");
 }
 
+int protocol_build_space_down(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "space_down");
+}
+
+int protocol_build_space_up(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "space_up");
+}
+
 int protocol_build_pong(char* buf, int buf_size) {
     return build_simple(buf, buf_size, "pong");
 }

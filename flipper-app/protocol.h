@@ -21,6 +21,8 @@ typedef enum {
     MsgTypeEsc,
     MsgTypeDown,
     MsgTypeVoice,
+    MsgTypeSpaceDown,
+    MsgTypeSpaceUp,
     MsgTypeHello,
     MsgTypePong,
     MsgTypeYes,
@@ -45,6 +47,8 @@ int protocol_build_cmd(char* buf, int buf_size, const char* text);
 int protocol_build_enter(char* buf, int buf_size);
 int protocol_build_esc(char* buf, int buf_size);
 int protocol_build_voice(char* buf, int buf_size);
+int protocol_build_space_down(char* buf, int buf_size);
+int protocol_build_space_up(char* buf, int buf_size);
 int protocol_build_down(char* buf, int buf_size);
 int protocol_build_pong(char* buf, int buf_size);
 int protocol_build_perm_resp(char* buf, int buf_size, bool allow, bool always, bool esc);
