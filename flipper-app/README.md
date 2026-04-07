@@ -11,7 +11,7 @@ It gives you haptic, audio, and LED feedback for important Claude events, and le
 - Physical controls for Enter, Escape, interrupt, menu navigation, and quick confirmation
 - Distinct sounds, vibration, and LED patterns for working, success, error, permission, and disconnect states
 - On-device permission prompts and status messages
-- Voice dictation trigger from the Flipper
+- Voice dictation trigger and hold-space voice input from the Flipper
 - Automatic transport selection: USB when available, Bluetooth LE otherwise
 
 ## Controls
@@ -19,6 +19,7 @@ It gives you haptic, audio, and LED feedback for important Claude events, and le
 | Button | Action |
 |--------|--------|
 | UP | Start / stop voice dictation |
+| UP (hold) | Hold Space for voice input |
 | LEFT | Interrupt Claude (Esc) |
 | LEFT (hold) | Send Ctrl+C |
 | RIGHT | Open slash command menu |

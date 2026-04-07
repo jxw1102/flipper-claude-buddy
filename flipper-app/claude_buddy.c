@@ -317,11 +317,20 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventSpaceHoldStart:
+        if(!app->dictating) {
+            notify_play(app->notifications, SoundVoiceStartLed, LedStateOff);
+        }
         len = protocol_build_space_down(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
 
     case UiEventSpaceHoldEnd:
+        if(!app->dictating) {
+            notify_play(
+                app->notifications,
+                SoundVoiceStopQuiet,
+                app->is_working ? LedStateWorking : LedStateOff);
+        }
         len = protocol_build_space_up(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;

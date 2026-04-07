@@ -343,7 +343,7 @@ static void status_draw(Canvas* canvas, void* model) {
     // ── Header bar (light theme with bottom separator) ──
     canvas_set_font(canvas, FontSecondary);
 
-    if(m->pose == PoseListening) {
+    if(m->pose == PoseListening || m->space_hold_active) {
         // Pulsing recording indicator centered in header
         int tw = (int)canvas_string_width(canvas, "REC");
         int total_w = 5 + 3 + tw;
@@ -354,14 +354,14 @@ static void status_draw(Canvas* canvas, void* model) {
             canvas_draw_circle(canvas, ox + 2, 5, 2);
         canvas_draw_str(canvas, ox + 8, 8, "REC");
     } else {
-        // Centered ▲ Dictation hint
-        int tw = (int)canvas_string_width(canvas, "Dictation");
+        // Centered ▲ Mic hint
+        int tw = (int)canvas_string_width(canvas, "Mic");
         int total_w = 5 + 3 + tw;
         int ox = 64 - total_w / 2;
         canvas_draw_dot(canvas, ox + 2, 3);
         canvas_draw_line(canvas, ox + 1, 4, ox + 3, 4);
         canvas_draw_line(canvas, ox, 5, ox + 4, 5);
-        canvas_draw_str(canvas, ox + 8, 8, "Dictation");
+        canvas_draw_str(canvas, ox + 8, 8, "Mic");
     }
 
     // Mute indicator — small 'M' at top-left when sound is off
@@ -462,6 +462,9 @@ static bool status_input(InputEvent* event, void* context) {
     }
     if(event->key == InputKeyUp && event->type == InputTypeLong) {
         ui->up_hold_active = true;
+        StatusModel* m = view_get_model(ui->status_view);
+        m->space_hold_active = true;
+        view_commit_model(ui->status_view, true);
         if(ui->event_callback) {
             ui->event_callback(UiEventSpaceHoldStart, NULL, ui->event_context);
         }
@@ -469,6 +472,9 @@ static bool status_input(InputEvent* event, void* context) {
     }
     if(event->key == InputKeyUp && event->type == InputTypeRelease && ui->up_hold_active) {
         ui->up_hold_active = false;
+        StatusModel* m = view_get_model(ui->status_view);
+        m->space_hold_active = false;
+        view_commit_model(ui->status_view, true);
         if(ui->event_callback) {
             ui->event_callback(UiEventSpaceHoldEnd, NULL, ui->event_context);
         }

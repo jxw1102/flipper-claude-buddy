@@ -58,10 +58,6 @@ def main():
 
     try:
         hook_input = json.loads(sys.stdin.read())
-        with open("/tmp/claude-flipper-bridge.log", "a") as logf:
-            logf.write("[on-permission-request] hook_input:\n")
-            logf.write(json.dumps(hook_input, indent=2))
-            logf.write("\n")
     except (json.JSONDecodeError, EOFError):
         sys.exit(1)
 

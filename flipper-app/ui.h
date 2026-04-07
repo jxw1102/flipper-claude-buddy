@@ -53,6 +53,7 @@ typedef struct {
     bool connected;         // serial/flipper connected
     bool claude_connected;  // claude code session active
     bool muted;             // sound mute active (shown as indicator in header)
+    bool space_hold_active; // true while Up long-press is held for hold-space input
     uint8_t pose;           // CharacterPose
     uint8_t anim_frame;     // animation counter (incremented by timer)
     uint8_t transport_mode; // 0 = USB, 1 = BT (shown in header)

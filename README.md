@@ -17,6 +17,7 @@ Interrupt a runaway task, submit a prompt, trigger voice dictation, or open the 
 | Button | Action |
 |--------|--------|
 | UP | Start / stop voice dictation |
+| UP (hold) | Hold Space for voice input |
 | LEFT | Interrupt Claude (ESC) |
 | LEFT (hold) | Send Ctrl+C |
 | RIGHT | Open slash command menu |

@@ -5,7 +5,7 @@ App(
     entry_point="claude_buddy_app",
     requires=["gui", "notification", "bt"],
     stack_size=4 * 1024,
-    fap_version="0.1",
+    fap_version="0.2",
     fap_icon="icons/claude_10x10.png",
     fap_category="USB",
     fap_description="Claude Code companion - physical remote control with audio feedback",
