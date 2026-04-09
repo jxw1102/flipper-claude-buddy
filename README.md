@@ -64,9 +64,13 @@ Connects over USB (plug-and-play) or Bluetooth LE — whichever is available. US
 
 | Problem | Fix |
 |---|---|
-| Flipper not found over USB | Set `FLIPPER_SERIAL_PORT=/dev/cu.usbmodemXXX` |
+| Flipper not found over USB | Make sure no other app (qFlipper, Chrome serial, etc.) is using the USB serial port — only one process can claim it at a time. Also try restarting the Flipper by holding **Back + Left**. If it still fails, set `FLIPPER_SERIAL_PORT=/dev/cu.usbmodemXXX` explicitly. |
 | Flipper not found over BLE | Make sure Bluetooth is on and the app is running on the Flipper |
 | No sound on task complete | Check that the bridge is running: `cat /tmp/claude-flipper-bridge.log` |
+
+## Support
+
+If you find this useful, consider [buying me a coffee](https://ko-fi.com/jxw1102).
 
 ## License
 

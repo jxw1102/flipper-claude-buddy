@@ -1,3 +1,8 @@
+## v0.3
+
+- Auto-discover slash commands from user/project commands, skills, and enabled plugins.
+- Selected menu commands are promoted to the top of the list for convenient re-use.
+
 ## v0.2
 
 - Routed remote input to the active runner session, including the correct terminal tab.
