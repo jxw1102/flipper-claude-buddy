@@ -12,6 +12,7 @@
  */
 
 #include "transport.h"
+#include "protocol.h"
 #include <furi.h>
 #include <furi_hal_bt.h>
 #include <bt/bt_service/bt.h>
@@ -30,7 +31,7 @@ typedef struct {
     bool                 connected;
     bool                 hello_sent; /* track per-connection hello */
     /* Line-buffered RX */
-    char                 rx_buf[512];
+    char                 rx_buf[PROTOCOL_MAX_MSG_LEN];
     int                  rx_pos;
 } BtTransport;
 

@@ -1,6 +1,7 @@
 /** USB CDC transport implementation. */
 
 #include "transport.h"
+#include "protocol.h"
 #include <string.h>
 #include <furi_hal_usb.h>
 #include <furi_hal_usb_cdc.h>
@@ -17,7 +18,7 @@ typedef struct {
     FuriHalUsbInterface* usb_mode_prev;
     FuriMutex*         tx_mutex;
     bool               running;
-    char               rx_buf[512];
+    char               rx_buf[PROTOCOL_MAX_MSG_LEN];
     int                rx_pos;
 } UsbTransport;
 

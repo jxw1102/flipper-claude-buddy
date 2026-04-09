@@ -60,7 +60,7 @@ typedef struct {
     uint8_t rssi_bars;      // BLE signal bars 0–4 (only used when transport_mode == 1)
 } StatusModel;
 
-#define MAX_MENU_ITEMS 64
+#define MAX_MENU_ITEMS 256
 #define MAX_MENU_ITEM_LEN 27
 
 typedef struct {

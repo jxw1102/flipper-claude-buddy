@@ -63,7 +63,11 @@ class Daemon:
             # Send command menu
             commands = self._load_commands()
             if commands:
-                await self.serial.send(protocol.menu_msg(commands))
+                menu_bytes = protocol.menu_msg(commands)
+                log.debug("Sending menu (%d commands, %d bytes)", len(commands), len(menu_bytes))
+                await self.serial.send(menu_bytes)
+            else:
+                log.warning("No commands loaded — menu not sent")
             self._menu_sent = True
 
         elif msg_type == "cmd":
@@ -144,7 +148,9 @@ class Daemon:
                 self._menu_sent = True
                 commands = self._load_commands()
                 if commands:
-                    await self.serial.send(protocol.menu_msg(commands))
+                    menu_bytes = protocol.menu_msg(commands)
+                    log.debug("Sending menu (%d commands, %d bytes)", len(commands), len(menu_bytes))
+                    await self.serial.send(menu_bytes)
                 if self._claude_connected:
                     await self.serial.send(protocol.state_msg(True))
 
@@ -235,14 +241,94 @@ class Daemon:
 
     # Built-in slash commands
     BUILTIN_COMMANDS = [
-        "/btw", "/copy", "/export", "/clear", "/compact", "/diff", "/buddy", "/context", "/memory", "/model", "/effort", "/usage",
-        "/config", "/doctor", "/help", "/init", "/agents", "/branch", "/mcp", "/plugins", "/reload-plugins", "/resume",
-        "/pr-comments", "/review", "/status", "/loop", "/insight", "/voice"
+        "/add-dir", "/agents", "/autofix-pr", "/batch", "/branch", "/btw", "/buddy",
+        "/chrome", "/claude-api", "/clear", "/color", "/compact", "/config", "/context",
+        "/copy", "/debug", "/desktop", "/diff", "/doctor", "/effort", "/exit", "/export",
+        "/extra-usage", "/fast", "/feedback", "/help", "/hooks", "/ide", "/init",
+        "/insights", "/install-github-app", "/install-slack-app", "/keybindings",
+        "/login", "/logout", "/loop", "/mcp", "/memory", "/mobile", "/model",
+        "/permissions", "/plan", "/plugin", "/powerup", "/release-notes",
+        "/reload-plugins", "/remote-control", "/remote-env", "/rename", "/resume",
+        "/review", "/rewind", "/sandbox", "/schedule", "/security-review", "/skills",
+        "/stats", "/status", "/statusline", "/stickers", "/tasks", "/team-onboarding",
+        "/teleport", "/terminal-setup", "/theme", "/ultraplan", "/update-config",
+        "/usage", "/voice",
     ]
 
     def _load_commands(self) -> list[str]:
-        """Load built-in commands + custom commands from flipper-commands.txt files."""
-        commands = list(self.BUILTIN_COMMANDS)
+        """Load built-in commands + all non-internal slash commands.
+
+        Sources (checked in both ``~/.claude/`` and ``<project>/.claude/``):
+        1. ``commands/*.md``  — filename (without .md) becomes ``/<name>``
+        2. ``skills/<name>/SKILL.md`` — ``name`` frontmatter becomes ``/<name>``
+        3. Enabled plugins (``enabledPlugins`` in settings.json) — for each
+           enabled plugin resolved from ``~/.claude/plugins/marketplaces/``
+           (falls back to ``cache/`` for externally-sourced plugins):
+           - ``commands/*.md``  → ``/<plugin>:<filename>``
+           - ``skills/<name>/SKILL.md`` → ``/<skill-name>`` (from frontmatter)
+        """
+        commands: set[str] = set(self.BUILTIN_COMMANDS)
+
+        home_claude = Path.home() / ".claude"
+        project_claude = Path(config.PROJECT_DIR) / ".claude"
+        roots = [home_claude, project_claude]
+        log.debug("Command discovery: home=%s project=%s", home_claude, project_claude)
+
+        # 1. commands/*.md
+        for root in roots:
+            commands_dir = root / "commands"
+            if commands_dir.is_dir():
+                for md in commands_dir.glob("*.md"):
+                    cmd = "/" + md.stem
+                    log.debug("  command file: %s -> %s", md, cmd)
+                    commands.add(cmd)
+
+        # 2. skills/<name>/SKILL.md
+        for root in roots:
+            skills_dir = root / "skills"
+            if skills_dir.is_dir():
+                for skill_md in skills_dir.glob("*/SKILL.md"):
+                    name = self._parse_skill_name(skill_md)
+                    if name:
+                        log.debug("  skill: %s -> %s", skill_md, name)
+                        commands.add(name)
+                    else:
+                        log.warning("  skill: %s — no name in frontmatter, skipped", skill_md)
+
+        # 3. Enabled plugins
+        enabled = self._get_enabled_plugins(roots)
+        log.debug("Enabled plugins: %s", enabled)
+        plugins_base = home_claude / "plugins"
+        for plugin_key, marketplace in enabled.items():
+            plugin_dir = self._resolve_plugin_in_marketplace(
+                plugins_base / "marketplaces" / marketplace, plugin_key
+            ) or self._resolve_plugin_in_cache(
+                plugins_base / "cache" / marketplace / plugin_key
+            )
+            if not plugin_dir:
+                log.warning("  plugin %s@%s — not found in marketplace or cache", plugin_key, marketplace)
+                continue
+            plugin_name = self._read_plugin_name(plugin_dir) or plugin_key
+            log.debug("  plugin %s@%s resolved to %s (name=%s)", plugin_key, marketplace, plugin_dir, plugin_name)
+            # Plugin commands/*.md
+            pcmd_dir = plugin_dir / "commands"
+            if pcmd_dir.is_dir():
+                for md in pcmd_dir.glob("*.md"):
+                    cmd = "/" + plugin_name + ":" + md.stem
+                    log.debug("    plugin command: %s -> %s", md, cmd)
+                    commands.add(cmd)
+            # Plugin skills/<name>/SKILL.md
+            pskills_dir = plugin_dir / "skills"
+            if pskills_dir.is_dir():
+                for skill_md in pskills_dir.glob("*/SKILL.md"):
+                    name = self._parse_skill_name(skill_md)
+                    if name:
+                        log.debug("    plugin skill: %s -> %s", skill_md, name)
+                        commands.add(name)
+                    else:
+                        log.warning("    plugin skill: %s — no name in frontmatter, skipped", skill_md)
+
+        # Legacy: flipper-commands.txt
         for path in config.CUSTOM_COMMANDS_FILES:
             if not os.path.isfile(path):
                 continue
@@ -251,13 +337,112 @@ class Daemon:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
-                            commands.append(line[:23])
+                            commands.add(line)
             except Exception as e:
                 log.error("Error reading %s: %s", path, e)
+
+        # Truncate to Flipper menu item limit, deduplicate again, sort
+        result = sorted({cmd[:27] for cmd in commands})
+        custom_count = len(result) - len(self.BUILTIN_COMMANDS)
         log.info("Loaded %d commands (%d built-in + %d custom)",
-                 len(commands), len(self.BUILTIN_COMMANDS),
-                 len(commands) - len(self.BUILTIN_COMMANDS))
-        return commands
+                 len(result), len(self.BUILTIN_COMMANDS), custom_count)
+        return result
+
+    @staticmethod
+    def _parse_skill_name(skill_md: Path) -> str | None:
+        """Extract ``name`` from SKILL.md YAML frontmatter, return as ``/name``."""
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        if not text.startswith("---"):
+            return None
+        end = text.find("---", 3)
+        if end == -1:
+            return None
+        for line in text[3:end].splitlines():
+            line = line.strip()
+            if line.startswith("name:"):
+                value = line[5:].strip().strip("'\"")
+                if value:
+                    return "/" + value
+        return None
+
+    @staticmethod
+    def _get_enabled_plugins(roots: list[Path]) -> dict[str, str]:
+        """Return ``{pluginName: marketplaceName}`` from settings.json in each root."""
+        enabled: dict[str, str] = {}
+        for root in roots:
+            settings_file = root / "settings.json"
+            if not settings_file.is_file():
+                continue
+            try:
+                data = json.loads(settings_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for key, val in (data.get("enabledPlugins") or {}).items():
+                if not val:
+                    continue
+                # key format: "pluginName@marketplace"
+                parts = key.split("@", 1)
+                if len(parts) == 2:
+                    plugin_name, marketplace = parts
+                    enabled.setdefault(plugin_name, marketplace)
+        return enabled
+
+    @staticmethod
+    def _resolve_plugin_in_marketplace(mkt_dir: Path, plugin_name: str) -> Path | None:
+        """Find a plugin directory inside a marketplace clone.
+
+        Checks, in order:
+        - ``<mkt>/plugins/<plugin>/``  (bundled plugin)
+        - ``<mkt>/external_plugins/<plugin>/``  (external plugin stub)
+        - Any dir under ``<mkt>/`` containing ``.claude-plugin/plugin.json``
+          whose ``name`` field matches *plugin_name* (e.g. single-plugin repos
+          where the plugin root is a subdirectory).
+        """
+        if not mkt_dir.is_dir():
+            return None
+        for subdir in ("plugins", "external_plugins"):
+            candidate = mkt_dir / subdir / plugin_name
+            if candidate.is_dir():
+                return candidate
+        # Search for .claude-plugin/plugin.json with matching name
+        for pj in mkt_dir.glob("**/.claude-plugin/plugin.json"):
+            plugin_dir = pj.parent.parent
+            # Skip the marketplace-level .claude-plugin (same dir as mkt_dir)
+            if plugin_dir == mkt_dir:
+                continue
+            try:
+                data = json.loads(pj.read_text(encoding="utf-8"))
+                if data.get("name") == plugin_name:
+                    return plugin_dir
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _resolve_plugin_in_cache(base: Path) -> Path | None:
+        """Fallback: find the latest versioned dir under ``cache/<mkt>/<plugin>/``."""
+        if not base.is_dir():
+            return None
+        versions = sorted(
+            (d for d in base.iterdir() if d.is_dir() and not d.name.startswith(".")),
+            reverse=True,
+        )
+        return versions[0] if versions else None
+
+    @staticmethod
+    def _read_plugin_name(plugin_dir: Path) -> str | None:
+        """Read ``name`` from ``.claude-plugin/plugin.json``."""
+        pj = plugin_dir / ".claude-plugin" / "plugin.json"
+        if not pj.is_file():
+            return None
+        try:
+            data = json.loads(pj.read_text(encoding="utf-8"))
+            return data.get("name") or None
+        except Exception:
+            return None
 
     async def _send_initial_state(self):
         """Wait for Flipper app to take over CDC, then send a ping.

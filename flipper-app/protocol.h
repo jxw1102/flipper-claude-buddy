@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PROTOCOL_MAX_MSG_LEN 512
+#define PROTOCOL_MAX_MSG_LEN 2048
 #define PROTOCOL_MAX_FIELD_LEN 64
 typedef enum {
     MsgTypeUnknown = 0,
@@ -33,7 +33,7 @@ typedef struct {
     bool vibro;
     char text[PROTOCOL_MAX_FIELD_LEN];   // line1
     char text2[PROTOCOL_MAX_FIELD_LEN];  // line2 (subtext)
-    char menu_data[512]; // pipe-delimited menu items
+    char menu_data[PROTOCOL_MAX_MSG_LEN]; // pipe-delimited menu items
     bool claude_connected; // claude code session state
     bool has_rssi;
     int16_t rssi;

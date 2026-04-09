@@ -4,36 +4,77 @@
 
 // Default slash commands (shown until bridge sends an updated list)
 static const char* default_menu_items[] = {
-    "/btw",
-    "/copy",
-    "/export",
-    "/clear",
-    "/compact",
-    "/diff",
-    "/buddy",
-    "/context",
-    "/memory",
-    "/model",
-    "/effort",
-    "/usage",
-    "/config",
-    "/doctor",
-    "/help",
-    "/init",
+    "/add-dir",
     "/agents",
+    "/autofix-pr",
+    "/batch",
     "/branch",
-    "/mcp",
-    "/plugins",
-    "/reload-plugins",
-    "/resume",
-    "/pr-comments",
-    "/review",
-    "/status",
+    "/btw",
+    "/buddy",
+    "/chrome",
+    "/claude-api",
+    "/clear",
+    "/color",
+    "/compact",
+    "/config",
+    "/context",
+    "/copy",
+    "/debug",
+    "/desktop",
+    "/diff",
+    "/doctor",
+    "/effort",
+    "/exit",
+    "/export",
+    "/extra-usage",
+    "/fast",
+    "/feedback",
+    "/help",
+    "/hooks",
+    "/ide",
+    "/init",
+    "/insights",
+    "/install-github-app",
+    "/install-slack-app",
+    "/keybindings",
+    "/login",
+    "/logout",
     "/loop",
-    "/insight",
-    "/voice"
+    "/mcp",
+    "/memory",
+    "/mobile",
+    "/model",
+    "/permissions",
+    "/plan",
+    "/plugin",
+    "/powerup",
+    "/release-notes",
+    "/reload-plugins",
+    "/remote-control",
+    "/remote-env",
+    "/rename",
+    "/resume",
+    "/review",
+    "/rewind",
+    "/sandbox",
+    "/schedule",
+    "/security-review",
+    "/skills",
+    "/stats",
+    "/status",
+    "/statusline",
+    "/stickers",
+    "/tasks",
+    "/team-onboarding",
+    "/teleport",
+    "/terminal-setup",
+    "/theme",
+    "/ultraplan",
+    "/update-config",
+    "/usage",
+    "/voice",
 };
-#define DEFAULT_MENU_COUNT 28
+#define DEFAULT_MENU_COUNT 69
 
 // ── Layout ───────────────────────────────────────────────────────
 
@@ -558,7 +599,7 @@ static void menu_draw(Canvas* canvas, void* model) {
 static bool menu_input(InputEvent* event, void* context) {
     if(!event || !context) return false;
     UiState* ui = context;
-    if(event->type != InputTypeShort) return false;
+    if(event->type != InputTypeShort && event->type != InputTypeRepeat) return false;
 
     MenuModel* m = view_get_model(ui->menu_view);
 
@@ -576,6 +617,18 @@ static bool menu_input(InputEvent* event, void* context) {
         if(ui->event_callback && m->count > 0) {
             ui->event_callback(
                 UiEventMenuSelect, m->items[m->index], ui->event_context);
+            // Promote selected item to top for convenient re-use
+            if(m->index > 0) {
+                char tmp[MAX_MENU_ITEM_LEN];
+                strncpy(tmp, m->items[m->index], MAX_MENU_ITEM_LEN - 1);
+                tmp[MAX_MENU_ITEM_LEN - 1] = '\0';
+                for(int i = m->index; i > 0; i--) {
+                    strncpy(m->items[i], m->items[i - 1], MAX_MENU_ITEM_LEN);
+                }
+                strncpy(m->items[0], tmp, MAX_MENU_ITEM_LEN);
+                m->index = 0;
+                view_commit_model(ui->menu_view, true);
+            }
         }
         return true;
     }

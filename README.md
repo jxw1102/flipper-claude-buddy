@@ -18,13 +18,14 @@ Interrupt a runaway task, submit a prompt, trigger voice dictation, or open the 
 |--------|--------|
 | UP | Start / stop voice dictation |
 | UP (hold) | Hold Space for voice input |
-| LEFT | Interrupt Claude (ESC) |
+| LEFT | Interrupt Claude (Esc) |
 | LEFT (hold) | Send Ctrl+C |
 | RIGHT | Open slash command menu |
-| OK | Submit (Enter) |
+| OK | Submit Enter (⏎) |
 | OK (hold) | Type "yes" and submit |
+| DOWN | Send Down arrow (↓) |
 | DOWN (hold) | Toggle mute |
-| BACK | Send backspace |
+| BACK | Send Backspace (⌫) |
 | BACK (hold) | Exit |
 
 ## Setup
