@@ -48,6 +48,9 @@ fi
 # Pass PLUGIN_DATA to bridge so it can write the BT name cache after hello
 export FLIPPER_PLUGIN_DATA="$PLUGIN_DATA"
 
+# Pass current project directory so the bridge can discover .claude/commands/
+export FLIPPER_PROJECT_DIR="$(pwd)"
+
 # Skip if no Flipper is connected (unless bridge is already running)
 if [ ! -S "$SOCKET" ]; then
     TRANSPORT="${FLIPPER_TRANSPORT:-auto}"
@@ -123,7 +126,8 @@ REFCOUNT_FILE="/tmp/claude-flipper-bridge.refcount"
 COUNT=$(cat "$REFCOUNT_FILE" 2>/dev/null || echo 0)
 echo $((COUNT + 1)) > "$REFCOUNT_FILE"
 
-echo '{"action":"claude_connect"}' \
+PROJECT_DIR="$(pwd)"
+echo "{\"action\":\"claude_connect\",\"project_dir\":\"$PROJECT_DIR\"}" \
     | nc -U "$SOCKET" 2>/dev/null || true
 
 echo "{\"action\":\"notify\",\"sound\":\"connect\",\"vibro\":true,\"text\":\"Session Start\",\"subtext\":\"$MODEL\"}" \

@@ -26,6 +26,7 @@ class Daemon:
         self._claude_connected = False
         self._perm_future: asyncio.Future | None = None
         self._menu_sent = False
+        self._cmd_map: dict[str, str] = {}  # truncated -> full command
         self._space_repeat_task: asyncio.Task | None = None
         self._session_targets: OrderedDict[str, dict[str, str]] = OrderedDict()
 
@@ -73,6 +74,7 @@ class Daemon:
         elif msg_type == "cmd":
             text = data.get("text", "")
             if text:
+                text = self._cmd_map.get(text, text)
                 await self._send_to_claude(text)
 
         elif msg_type == "yes":
@@ -175,8 +177,17 @@ class Daemon:
             return {"status": "ok"}
 
         elif action == "claude_connect":
+            # Update project dir if provided (may differ from bridge startup)
+            project_dir = request.get("project_dir", "")
+            if project_dir:
+                config.PROJECT_DIR = project_dir
+                log.info("Updated PROJECT_DIR to %s", project_dir)
             self._claude_connected = True
             await self.serial.send(protocol.state_msg(True))
+            # Refresh commands for the (possibly new) project
+            commands = self._load_commands()
+            if commands and self.serial.connected:
+                await self.serial.send(protocol.menu_msg(commands))
             return {"status": "ok"}
 
         elif action == "claude_disconnect":
@@ -341,8 +352,14 @@ class Daemon:
             except Exception as e:
                 log.error("Error reading %s: %s", path, e)
 
-        # Truncate to Flipper menu item limit, deduplicate again, sort
-        result = sorted({cmd[:27] for cmd in commands})
+        # Build truncated->full mapping; Flipper menu items are 26 chars max
+        MENU_ITEM_MAX = 26
+        self._cmd_map = {}
+        for cmd in commands:
+            truncated = cmd[:MENU_ITEM_MAX]
+            self._cmd_map[truncated] = cmd
+
+        result = sorted(self._cmd_map.keys())
         custom_count = len(result) - len(self.BUILTIN_COMMANDS)
         log.info("Loaded %d commands (%d built-in + %d custom)",
                  len(result), len(self.BUILTIN_COMMANDS), custom_count)
@@ -573,7 +590,9 @@ class Daemon:
         asyncio.create_task(self.serial.reconnect_loop())
         asyncio.create_task(self._dictation_sync_loop())
 
-        log.info("Daemon running. Press Ctrl+C to stop.")
+        log.info("=" * 60)
+        log.info("Bridge daemon started")
+        log.info("=" * 60)
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
@@ -582,6 +601,9 @@ class Daemon:
             await self._stop_space_repeat()
             self.serial.close()
             await self.ipc.stop()
+            log.info("=" * 60)
+            log.info("Bridge daemon stopped")
+            log.info("=" * 60)
 
 
 def _save_bt_name_to_plugin_config(bt_name: str) -> None:
