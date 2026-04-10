@@ -33,6 +33,28 @@
         ]
       }
     ],
+    "Elicitation": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/on-elicitation.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/on-post-tool-use-failure.py"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "",

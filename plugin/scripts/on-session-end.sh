@@ -11,9 +11,18 @@ REFCOUNT_FILE="/tmp/claude-flipper-bridge.refcount"
 PAYLOAD=$(cat)
 REASON=$(echo "$PAYLOAD" | python3 -c '
 import json, sys
+REASONS = {
+    "clear": "Cleared",
+    "resume": "Switched session",
+    "logout": "Logged out",
+    "prompt_input_exit": "User exited",
+    "bypass_permissions_disabled": "Bypass perms off",
+    "other": "Disconnected",
+}
 try:
     data = json.load(sys.stdin)
-    print((data.get("reason") or "Disconnected")[:21])
+    raw = data.get("reason") or ""
+    print(REASONS.get(raw, raw or "Disconnected")[:21])
 except Exception:
     print("Disconnected")
 ' 2>/dev/null)

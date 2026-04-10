@@ -8,13 +8,23 @@ SOCKET="/tmp/claude-flipper-bridge.sock"
 PIDFILE="/tmp/claude-flipper-bridge.pid"
 LOG="/tmp/claude-flipper-bridge.log"
 
-# Read hook payload from stdin and extract the model for display.
+# Read hook payload from stdin and extract source for display subtext.
 PAYLOAD=$(cat)
-MODEL=$(echo "$PAYLOAD" | python3 -c '
+SUBTEXT=$(echo "$PAYLOAD" | python3 -c '
 import json, sys
+SOURCES = {
+    "startup": "New session",
+    "resume": "Resumed",
+    "clear": "After clear",
+    "compact": "After compaction",
+}
 try:
     data = json.load(sys.stdin)
-    print((data.get("model") or "")[:21])
+    source = data.get("source") or ""
+    label = SOURCES.get(source, "")
+    if not label:
+        label = (data.get("model") or "")[:21]
+    print(label)
 except Exception:
     print("")
 ' 2>/dev/null)
@@ -130,7 +140,7 @@ PROJECT_DIR="$(pwd)"
 echo "{\"action\":\"claude_connect\",\"project_dir\":\"$PROJECT_DIR\"}" \
     | nc -U "$SOCKET" 2>/dev/null || true
 
-echo "{\"action\":\"notify\",\"sound\":\"connect\",\"vibro\":true,\"text\":\"Session Start\",\"subtext\":\"$MODEL\"}" \
+echo "{\"action\":\"notify\",\"sound\":\"connect\",\"vibro\":true,\"text\":\"Session Start\",\"subtext\":\"$SUBTEXT\"}" \
     | nc -U "$SOCKET" 2>/dev/null || true
 
 exit 0
