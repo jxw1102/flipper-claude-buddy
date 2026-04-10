@@ -533,6 +533,10 @@ static bool status_input(InputEvent* event, void* context) {
         if(ui->event_callback) ui->event_callback(UiEventOpenMenu, NULL, ui->event_context);
         return true;
     }
+    if(event->key == InputKeyRight && event->type == InputTypeLong) {
+        if(ui->event_callback) ui->event_callback(UiEventOpenInfo, NULL, ui->event_context);
+        return true;
+    }
     if(event->key == InputKeyBack && event->type == InputTypeShort) {
         if(ui->event_callback) ui->event_callback(UiEventBackspace, NULL, ui->event_context);
         return true;
@@ -635,6 +639,101 @@ static bool menu_input(InputEvent* event, void* context) {
     if(event->key == InputKeyBack) {
         if(ui->event_callback) ui->event_callback(UiEventMenuBack, NULL, ui->event_context);
         return true;
+    }
+    return false;
+}
+
+// ── Info View ────────────────────────────────────────────────────
+
+#define INFO_MENU_COUNT 2
+static const char* info_menu_items[] = {"Help", "About"};
+
+static void info_draw(Canvas* canvas, void* model) {
+    if(!canvas || !model) return;
+    InfoModel* m = model;
+    canvas_clear(canvas);
+
+    if(m->page == InfoPageMenu) {
+        draw_header(canvas, "INFO", false);
+        const int item_h = 10;
+        const int list_y = 14;
+        for(int i = 0; i < INFO_MENU_COUNT; i++) {
+            int by = list_y + i * item_h;
+            canvas_set_font(canvas, FontSecondary);
+            if(i == m->index) {
+                canvas_draw_rbox(canvas, 1, by, 121, item_h, 1);
+                canvas_set_color(canvas, ColorWhite);
+                canvas_draw_str(canvas, 5, by + 7, info_menu_items[i]);
+                canvas_set_color(canvas, ColorBlack);
+            } else {
+                canvas_draw_str(canvas, 5, by + 7, info_menu_items[i]);
+            }
+        }
+        draw_footer_sep(canvas);
+        hint_ok(canvas, "Open");
+        hint_back(canvas, "Back");
+    } else if(m->page == InfoPageHelp) {
+        draw_header(canvas, "HELP", false);
+        canvas_set_font(canvas, FontSecondary);
+        int y = 19;
+        canvas_draw_str(canvas, 2, y, "OK:Enter  Left:Esc");
+        y += 9;
+        canvas_draw_str(canvas, 2, y, "Right:Cmds  Down:Tab");
+        y += 9;
+        canvas_draw_str(canvas, 2, y, "Up:Voice  Back:Bksp");
+        y += 9;
+        canvas_draw_str(canvas, 2, y, "Hold OK:Yes  L:Ctrl+C");
+        y += 9;
+        canvas_draw_str(canvas, 2, y, "Hold Down:Mute");
+        draw_footer_sep(canvas);
+        hint_back(canvas, "Back");
+    } else if(m->page == InfoPageAbout) {
+        draw_header(canvas, "ABOUT", false);
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignCenter, "Claude Buddy");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, 64, 34, AlignCenter, AlignCenter, "v0.3");
+        canvas_draw_str_aligned(canvas, 64, 46, AlignCenter, AlignCenter, "Claude Code companion");
+        draw_footer_sep(canvas);
+        hint_back(canvas, "Back");
+    }
+}
+
+static bool info_input(InputEvent* event, void* context) {
+    if(!event || !context) return false;
+    UiState* ui = context;
+    if(event->type != InputTypeShort && event->type != InputTypeRepeat) return false;
+
+    InfoModel* m = view_get_model(ui->info_view);
+
+    if(m->page == InfoPageMenu) {
+        if(event->key == InputKeyUp && m->index > 0) {
+            m->index--;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        if(event->key == InputKeyDown && m->index < INFO_MENU_COUNT - 1) {
+            m->index++;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        if(event->key == InputKeyOk) {
+            m->page = (m->index == 0) ? InfoPageHelp : InfoPageAbout;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            ui->current_view = ViewIdStatus;
+            view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdStatus);
+            return true;
+        }
+    } else {
+        // Help or About page — Back returns to info menu
+        if(event->key == InputKeyBack) {
+            m->page = InfoPageMenu;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
     }
     return false;
 }
@@ -793,6 +892,14 @@ UiState* ui_alloc(Gui* gui) {
     view_set_context(ui->perm_view, ui);
     view_dispatcher_add_view(ui->view_dispatcher, ViewIdPerm, ui->perm_view);
 
+    // Info view
+    ui->info_view = view_alloc();
+    view_allocate_model(ui->info_view, ViewModelTypeLockFree, sizeof(InfoModel));
+    view_set_draw_callback(ui->info_view, info_draw);
+    view_set_input_callback(ui->info_view, info_input);
+    view_set_context(ui->info_view, ui);
+    view_dispatcher_add_view(ui->view_dispatcher, ViewIdInfo, ui->info_view);
+
     // Animation timer (150ms tick for character animations)
     ui->anim_timer = furi_timer_alloc(anim_tick, FuriTimerTypePeriodic, ui);
     furi_timer_start(ui->anim_timer, 150);
@@ -811,9 +918,11 @@ void ui_free(UiState* ui) {
     view_dispatcher_remove_view(ui->view_dispatcher, ViewIdStatus);
     view_dispatcher_remove_view(ui->view_dispatcher, ViewIdMenu);
     view_dispatcher_remove_view(ui->view_dispatcher, ViewIdPerm);
+    view_dispatcher_remove_view(ui->view_dispatcher, ViewIdInfo);
     view_free(ui->status_view);
     view_free(ui->menu_view);
     view_free(ui->perm_view);
+    view_free(ui->info_view);
     view_dispatcher_free(ui->view_dispatcher);
     free(ui);
 }
@@ -880,6 +989,16 @@ void ui_show_menu(UiState* ui) {
     view_commit_model(ui->menu_view, true);
     ui->current_view = ViewIdMenu;
     view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdMenu);
+}
+
+void ui_show_info(UiState* ui) {
+    if(!ui) return;
+    InfoModel* m = view_get_model(ui->info_view);
+    m->page = InfoPageMenu;
+    m->index = 0;
+    view_commit_model(ui->info_view, true);
+    ui->current_view = ViewIdInfo;
+    view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdInfo);
 }
 
 void ui_show_listening(UiState* ui) {

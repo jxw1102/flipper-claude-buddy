@@ -9,6 +9,7 @@ typedef enum {
     ViewIdStatus,
     ViewIdMenu,
     ViewIdPerm,
+    ViewIdInfo,
 } ViewId;
 
 typedef enum {
@@ -31,6 +32,7 @@ typedef enum {
     UiEventInterrupt,    // long-press Left: send Ctrl+C interrupt
     UiEventToggleMute,   // long-press Down: toggle sound mute
     UiEventYes,          // long-press Ok: type "yes" + enter
+    UiEventOpenInfo,     // long-press Right: open info menu
 } UiEventType;
 
 typedef enum {
@@ -76,11 +78,23 @@ typedef struct {
     uint8_t mode; // 0 = once, 1 = always (persists across requests)
 } PermModel;
 
+typedef enum {
+    InfoPageMenu,   // top-level: Help / About
+    InfoPageHelp,
+    InfoPageAbout,
+} InfoPage;
+
+typedef struct {
+    InfoPage page;
+    int index;  // selected item on menu page
+} InfoModel;
+
 typedef struct {
     ViewDispatcher* view_dispatcher;
     View* status_view;
     View* menu_view;
     View* perm_view;
+    View* info_view;
     FuriTimer* anim_timer;
     UiEventCallback event_callback;
     void* event_context;
@@ -100,6 +114,7 @@ void ui_set_pose(UiState* ui, uint8_t pose);
 void ui_set_transport_mode(UiState* ui, bool is_bt);
 void ui_update_menu(UiState* ui, const char* pipe_delimited);
 void ui_show_permission(UiState* ui, const char* tool, const char* detail);
+void ui_show_info(UiState* ui);
 void ui_back_to_status(UiState* ui);
 void ui_set_muted(UiState* ui, bool muted);
 void ui_set_rssi(UiState* ui, int rssi);

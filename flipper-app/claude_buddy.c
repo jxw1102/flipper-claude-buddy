@@ -339,6 +339,10 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         ui_show_menu(app->ui);
         break;
 
+    case UiEventOpenInfo:
+        ui_show_info(app->ui);
+        break;
+
     case UiEventMenuSelect:
         if(data) {
             app_notify(app, SoundCmd);
