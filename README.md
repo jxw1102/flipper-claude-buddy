@@ -21,6 +21,7 @@ Interrupt a runaway task, submit a prompt, trigger voice dictation, or open the 
 | LEFT | Interrupt Claude (Esc) |
 | LEFT (hold) | Send Ctrl+C |
 | RIGHT | Open slash command menu |
+| RIGHT (hold) | Open menu |
 | OK | Submit Enter (⏎) |
 | OK (hold) | Type "yes" and submit |
 | DOWN | Send Down arrow (↓) |

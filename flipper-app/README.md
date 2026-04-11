@@ -23,6 +23,7 @@ It gives you haptic, audio, and LED feedback for important Claude events, and le
 | LEFT | Interrupt Claude (Esc) |
 | LEFT (hold) | Send Ctrl+C |
 | RIGHT | Open slash command menu |
+| RIGHT (hold) | Open menu |
 | OK | Submit Enter (⏎) |
 | OK (hold) | Type "yes" and submit |
 | DOWN | Send Down arrow (↓) |

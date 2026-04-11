@@ -99,6 +99,9 @@ static void anim_tick(void* context) {
     pm->anim_frame++;
     view_commit_model(ui->perm_view, true);
 
+    InfoModel* im = view_get_model(ui->info_view);
+    im->anim_frame++;
+    view_commit_model(ui->info_view, true);
 }
 
 // ── Button Hints ─────────────────────────────────────────────────
@@ -191,6 +194,17 @@ static void draw_scrollbar(Canvas* canvas, int idx, int count, int y0, int y1) {
     canvas_draw_line(canvas, 126, y0, 126, y1); // track
     canvas_draw_box(canvas, 125, by, 3, bh);    // thumb
 }
+
+// Button icon IDs (used by help page and status hint)
+enum {
+    HelpBtnUp,
+    HelpBtnLeft,
+    HelpBtnRight,
+    HelpBtnOk,
+    HelpBtnDown,
+    HelpBtnBack,
+};
+static void draw_help_icon(Canvas* canvas, int x, int y, uint8_t button);
 
 // Claude character (original Claude Code icon design + animated poses)
 // Body: 18x10 rectangle, ears: dots, legs: 4 lines, eyes: 2x3 white cutouts
@@ -457,13 +471,25 @@ static void status_draw(Canvas* canvas, void* model) {
     const char* main_text = m->connected ? "Ready" : "No connection";
     if(m->text[0] != '\0') main_text = m->text;
     bool has_sub = m->subtext[0] != '\0';
+    bool show_hint = !has_sub && m->connected && m->text[0] == '\0';
 
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str_aligned(
-        canvas, 77, has_sub ? 25 : 31, AlignCenter, AlignCenter, main_text);
+        canvas, 77, (has_sub || show_hint) ? 25 : 31, AlignCenter, AlignCenter, main_text);
     if(has_sub) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str_aligned(canvas, 77, 37, AlignCenter, AlignCenter, m->subtext);
+    } else if(show_hint) {
+        canvas_set_font(canvas, FontSecondary);
+        // "Hold [►] for menu" with inline icon
+        int hw = (int)canvas_string_width(canvas, "Hold ");
+        int fw = (int)canvas_string_width(canvas, " for menu");
+        int sw = (int)canvas_string_width(canvas, " "); // space after icon
+        int total = hw + 5 + sw + fw; // 5px icon width + space
+        int hx = 77 - total / 2;
+        canvas_draw_str(canvas, hx, 39, "Hold ");
+        draw_help_icon(canvas, hx + hw, 39, HelpBtnRight);
+        canvas_draw_str(canvas, hx + hw + 6 + sw, 39, "for menu");
     }
 
     // ── Footer ──
@@ -645,8 +671,88 @@ static bool menu_input(InputEvent* event, void* context) {
 
 // ── Info View ────────────────────────────────────────────────────
 
-#define INFO_MENU_COUNT 2
-static const char* info_menu_items[] = {"Help", "About"};
+#define INFO_MENU_COUNT 4
+static const char* info_menu_items[] = {"Help", "Transcript", "Plan/Code Mode", "About"};
+
+static const char* about_lines[] = {
+    "Claude Buddy",
+    "v0.4",
+    "Claude Code companion",
+    "by jxw1102",
+    "github.com/jxw1102",
+    "/flipper-claude-buddy",
+};
+#define ABOUT_LINE_COUNT 6
+#define ABOUT_VISIBLE    3
+
+typedef struct {
+    uint8_t button;
+    bool hold;
+    const char* desc;
+} HelpEntry;
+
+static const HelpEntry help_entries[] = {
+    {HelpBtnUp,    false, "Voice dictation"},
+    {HelpBtnUp,    true,  "Hold-to-talk"},
+    {HelpBtnLeft,  false, "Interrupt (Esc)"},
+    {HelpBtnLeft,  true,  "Ctrl+C"},
+    {HelpBtnRight, false, "Cmd menu"},
+    {HelpBtnRight, true,  "Menu"},
+    {HelpBtnOk,    false, "Enter"},
+    {HelpBtnOk,    true,  "Yes + Enter"},
+    {HelpBtnDown,  false, "Down arrow"},
+    {HelpBtnDown,  true,  "Mute"},
+    {HelpBtnBack,  false, "Backspace"},
+    {HelpBtnBack,  true,  "Exit app"},
+};
+#define HELP_LINE_COUNT 12
+#define HELP_VISIBLE    4
+#define HELP_LINE_H     10
+#define HELP_COLON_X    31
+#define HELP_DESC_X     36
+
+// Small inline button icon at (x, baseline_y) — vertically centered with text
+static void draw_help_icon(Canvas* canvas, int x, int y, uint8_t button) {
+    int cy = y - 3;
+    switch(button) {
+    case HelpBtnUp: // ▲ (5w x 3h)
+        canvas_draw_dot(canvas, x + 2, cy - 1);
+        canvas_draw_line(canvas, x + 1, cy, x + 3, cy);
+        canvas_draw_line(canvas, x, cy + 1, x + 4, cy + 1);
+        break;
+    case HelpBtnDown: // ▼ (5w x 3h)
+        canvas_draw_line(canvas, x, cy - 1, x + 4, cy - 1);
+        canvas_draw_line(canvas, x + 1, cy, x + 3, cy);
+        canvas_draw_dot(canvas, x + 2, cy + 1);
+        break;
+    case HelpBtnLeft: // ◄ (5w x 5h)
+        canvas_draw_dot(canvas, x, cy);
+        canvas_draw_line(canvas, x + 1, cy - 1, x + 1, cy + 1);
+        canvas_draw_line(canvas, x + 2, cy - 2, x + 2, cy + 2);
+        canvas_draw_line(canvas, x + 3, cy - 2, x + 3, cy + 2);
+        canvas_draw_dot(canvas, x + 4, cy - 2);
+        canvas_draw_dot(canvas, x + 4, cy + 2);
+        break;
+    case HelpBtnRight: // ► (5w x 5h)
+        canvas_draw_dot(canvas, x, cy - 2);
+        canvas_draw_dot(canvas, x, cy + 2);
+        canvas_draw_line(canvas, x + 1, cy - 2, x + 1, cy + 2);
+        canvas_draw_line(canvas, x + 2, cy - 1, x + 2, cy + 1);
+        canvas_draw_line(canvas, x + 3, cy - 1, x + 3, cy + 1);
+        canvas_draw_dot(canvas, x + 4, cy);
+        break;
+    case HelpBtnOk: // ● (5w x 5h)
+        canvas_draw_disc(canvas, x + 2, cy, 2);
+        break;
+    case HelpBtnBack: // ↩ (7w x 5h) — matches footer back icon
+        canvas_draw_line(canvas, x, cy - 1, x + 5, cy - 1); // top bar
+        canvas_draw_line(canvas, x, cy - 1, x + 1, cy - 2);  // arrowhead up
+        canvas_draw_line(canvas, x, cy - 1, x + 1, cy);      // arrowhead down
+        canvas_draw_line(canvas, x + 5, cy - 1, x + 5, cy + 2); // vertical drop
+        canvas_draw_line(canvas, x + 2, cy + 2, x + 5, cy + 2); // bottom bar
+        break;
+    }
+}
 
 static void info_draw(Canvas* canvas, void* model) {
     if(!canvas || !model) return;
@@ -654,7 +760,7 @@ static void info_draw(Canvas* canvas, void* model) {
     canvas_clear(canvas);
 
     if(m->page == InfoPageMenu) {
-        draw_header(canvas, "INFO", false);
+        draw_header(canvas, "MENU", false);
         const int item_h = 10;
         const int list_y = 14;
         for(int i = 0; i < INFO_MENU_COUNT; i++) {
@@ -674,26 +780,64 @@ static void info_draw(Canvas* canvas, void* model) {
         hint_back(canvas, "Back");
     } else if(m->page == InfoPageHelp) {
         draw_header(canvas, "HELP", false);
-        canvas_set_font(canvas, FontSecondary);
         int y = 19;
-        canvas_draw_str(canvas, 2, y, "OK:Enter  Left:Esc");
-        y += 9;
-        canvas_draw_str(canvas, 2, y, "Right:Cmds  Down:Tab");
-        y += 9;
-        canvas_draw_str(canvas, 2, y, "Up:Voice  Back:Bksp");
-        y += 9;
-        canvas_draw_str(canvas, 2, y, "Hold OK:Yes  L:Ctrl+C");
-        y += 9;
-        canvas_draw_str(canvas, 2, y, "Hold Down:Mute");
+        for(int i = 0; i < HELP_VISIBLE && (m->scroll + i) < HELP_LINE_COUNT; i++) {
+            const HelpEntry* e = &help_entries[m->scroll + i];
+            canvas_set_font(canvas, FontSecondary);
+            draw_help_icon(canvas, 2, y, e->button);
+            if(e->hold) {
+                canvas_draw_str(canvas, 9, y, "Hold");
+            }
+            canvas_draw_str(canvas, HELP_COLON_X, y, ":");
+            canvas_draw_str(canvas, HELP_DESC_X, y, e->desc);
+            y += HELP_LINE_H;
+        }
+        draw_scrollbar(canvas, m->scroll, HELP_LINE_COUNT - HELP_VISIBLE + 1,
+                        HDR_H + 1, FTR_Y - 1);
         draw_footer_sep(canvas);
         hint_back(canvas, "Back");
     } else if(m->page == InfoPageAbout) {
         draw_header(canvas, "ABOUT", false);
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignCenter, "Claude Buddy");
+        // Character scrolls with content — only visible at scroll 0
+        int text_start, text_count, y;
+        if(m->scroll == 0) {
+            draw_claude(canvas, 55, 12, PoseIdle, m->anim_frame);
+            text_start = 0;
+            text_count = ABOUT_VISIBLE;
+            y = 30;
+        } else {
+            text_start = m->scroll - 1;
+            text_count = ABOUT_VISIBLE + 1;
+            y = 19;
+        }
+        for(int i = 0; i < text_count && (text_start + i) < ABOUT_LINE_COUNT; i++) {
+            int li = text_start + i;
+            canvas_set_font(canvas, (li == 0) ? FontPrimary : FontSecondary);
+            canvas_draw_str_aligned(
+                canvas, 64, y, AlignCenter, AlignCenter, about_lines[li]);
+            y += 9;
+        }
+        int about_max = 1 + ABOUT_LINE_COUNT - (ABOUT_VISIBLE + 1);
+        if(about_max > 0) {
+            draw_scrollbar(canvas, m->scroll, about_max + 1, HDR_H + 1, FTR_Y - 1);
+        }
+        draw_footer_sep(canvas);
+        hint_back(canvas, "Back");
+    } else if(m->page == InfoPageTranscript) {
+        draw_header(canvas, "TRANSCRIPT", false);
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, 64, 34, AlignCenter, AlignCenter, "v0.3");
-        canvas_draw_str_aligned(canvas, 64, 46, AlignCenter, AlignCenter, "Claude Code companion");
+        int y = 19;
+        draw_help_icon(canvas, 2, y, HelpBtnUp);
+        canvas_draw_str(canvas, 10, y, "Page Up");
+        y += HELP_LINE_H;
+        draw_help_icon(canvas, 2, y, HelpBtnDown);
+        canvas_draw_str(canvas, 10, y, "Page Down");
+        y += HELP_LINE_H;
+        draw_help_icon(canvas, 2, y, HelpBtnLeft);
+        canvas_draw_str(canvas, 10, y, "Ctrl+O");
+        y += HELP_LINE_H;
+        draw_help_icon(canvas, 2, y, HelpBtnRight);
+        canvas_draw_str(canvas, 10, y, "Ctrl+E");
         draw_footer_sep(canvas);
         hint_back(canvas, "Back");
     }
@@ -707,18 +851,26 @@ static bool info_input(InputEvent* event, void* context) {
     InfoModel* m = view_get_model(ui->info_view);
 
     if(m->page == InfoPageMenu) {
-        if(event->key == InputKeyUp && m->index > 0) {
-            m->index--;
+        if(event->key == InputKeyUp) {
+            m->index = (m->index > 0) ? m->index - 1 : INFO_MENU_COUNT - 1;
             view_commit_model(ui->info_view, true);
             return true;
         }
-        if(event->key == InputKeyDown && m->index < INFO_MENU_COUNT - 1) {
-            m->index++;
+        if(event->key == InputKeyDown) {
+            m->index = (m->index < INFO_MENU_COUNT - 1) ? m->index + 1 : 0;
             view_commit_model(ui->info_view, true);
             return true;
         }
         if(event->key == InputKeyOk) {
-            m->page = (m->index == 0) ? InfoPageHelp : InfoPageAbout;
+            if(m->index == 2) { // Plan Mode — send Shift+Tab, stay on menu
+                view_commit_model(ui->info_view, false);
+                if(ui->event_callback)
+                    ui->event_callback(UiEventShiftTab, NULL, ui->event_context);
+                return true;
+            }
+            const InfoPage pages[] = {InfoPageHelp, InfoPageTranscript, 0, InfoPageAbout};
+            m->page = pages[m->index];
+            m->scroll = 0;
             view_commit_model(ui->info_view, true);
             return true;
         }
@@ -727,8 +879,58 @@ static bool info_input(InputEvent* event, void* context) {
             view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdStatus);
             return true;
         }
-    } else {
-        // Help or About page — Back returns to info menu
+    } else if(m->page == InfoPageHelp) {
+        if(event->key == InputKeyUp && m->scroll > 0) {
+            m->scroll--;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        if(event->key == InputKeyDown && m->scroll < HELP_LINE_COUNT - HELP_VISIBLE) {
+            m->scroll++;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            m->page = InfoPageMenu;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+    } else if(m->page == InfoPageTranscript) {
+        view_commit_model(ui->info_view, false);
+        if(event->key == InputKeyUp) {
+            if(ui->event_callback) ui->event_callback(UiEventPageUp, NULL, ui->event_context);
+            return true;
+        }
+        if(event->key == InputKeyDown) {
+            if(ui->event_callback) ui->event_callback(UiEventPageDown, NULL, ui->event_context);
+            return true;
+        }
+        if(event->key == InputKeyLeft) {
+            if(ui->event_callback) ui->event_callback(UiEventCtrlO, NULL, ui->event_context);
+            return true;
+        }
+        if(event->key == InputKeyRight) {
+            if(ui->event_callback) ui->event_callback(UiEventCtrlE, NULL, ui->event_context);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            InfoModel* m2 = view_get_model(ui->info_view);
+            m2->page = InfoPageMenu;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        return true;
+    } else if(m->page == InfoPageAbout) {
+        if(event->key == InputKeyUp && m->scroll > 0) {
+            m->scroll--;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
+        if(event->key == InputKeyDown && m->scroll < 1 + ABOUT_LINE_COUNT - (ABOUT_VISIBLE + 1)) {
+            m->scroll++;
+            view_commit_model(ui->info_view, true);
+            return true;
+        }
         if(event->key == InputKeyBack) {
             m->page = InfoPageMenu;
             view_commit_model(ui->info_view, true);
@@ -949,7 +1151,7 @@ void ui_show_status(UiState* ui, const char* text, bool connected) {
         m->anim_frame = 0;
     }
     view_commit_model(ui->status_view, true);
-    if(ui->current_view != ViewIdMenu) {
+    if(ui->current_view != ViewIdMenu && ui->current_view != ViewIdInfo) {
         ui->current_view = ViewIdStatus;
         view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdStatus);
     }
@@ -976,7 +1178,7 @@ void ui_show_status2(UiState* ui, const char* text, const char* subtext, bool co
         m->anim_frame = 0;
     }
     view_commit_model(ui->status_view, true);
-    if(ui->current_view != ViewIdMenu) {
+    if(ui->current_view != ViewIdMenu && ui->current_view != ViewIdInfo) {
         ui->current_view = ViewIdStatus;
         view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdStatus);
     }

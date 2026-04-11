@@ -182,6 +182,26 @@ int protocol_build_yes(char* buf, int buf_size) {
     return build_simple(buf, buf_size, "yes");
 }
 
+int protocol_build_pgup(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "pgup");
+}
+
+int protocol_build_pgdown(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "pgdown");
+}
+
+int protocol_build_ctrl_o(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "ctrl_o");
+}
+
+int protocol_build_ctrl_e(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "ctrl_e");
+}
+
+int protocol_build_shift_tab(char* buf, int buf_size) {
+    return build_simple(buf, buf_size, "shift_tab");
+}
+
 int protocol_build_perm_resp(char* buf, int buf_size, bool allow, bool always, bool esc) {
     if(!buf || buf_size <= 0) return 0;
     return snprintf(

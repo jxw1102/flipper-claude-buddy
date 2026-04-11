@@ -110,3 +110,18 @@ The Flipper sends `hello` on the first received `ping` (from the GUI thread), no
 - PID: `/tmp/claude-flipper-bridge.pid`
 - Log: `/tmp/claude-flipper-bridge.log`
 - Session refcount: `/tmp/claude-flipper-bridge.refcount`
+
+## Releasing a New Version
+
+1. **`flipper-app/application.fam`** — update `fap_version`
+2. **`flipper-app/ui.c`** — update version string on the About page
+3. **`plugin/.claude-plugin/plugin.json`** — update `version`
+4. **`plugin/host-bridge/pyproject.toml`** — update `version`
+5. **`flipper-app/CHANGELOG.md`** — add a new `## vX.Y` section at the top
+6. Commit, push, then tag and create a GitHub release:
+   ```bash
+   git tag X.Y
+   git push origin X.Y
+   gh release create X.Y --title "X.Y" --notes-file flipper-app/CHANGELOG.md
+   ```
+   The CI workflow (`.github/workflows/build-fap.yml`) builds the FAP artifact on push.

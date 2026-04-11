@@ -398,6 +398,32 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         transport_send(app->transport, app->tx_buf, len);
         break;
 
+    case UiEventPageUp:
+        len = protocol_build_pgup(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
+    case UiEventPageDown:
+        len = protocol_build_pgdown(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
+    case UiEventCtrlO:
+        len = protocol_build_ctrl_o(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
+    case UiEventCtrlE:
+        len = protocol_build_ctrl_e(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
+    case UiEventShiftTab:
+        app_notify(app, SoundCmd);
+        len = protocol_build_shift_tab(app->tx_buf, sizeof(app->tx_buf));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+
     case UiEventExitApp:
         ui_stop(app->ui);
         break;

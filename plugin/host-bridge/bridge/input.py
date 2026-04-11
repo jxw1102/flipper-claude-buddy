@@ -45,6 +45,10 @@ class InputBackend(ABC):
     async def send_chars(self, text: str, *, focus: bool = True) -> None:
         """Type text without pressing Return."""
 
+    @abstractmethod
+    async def send_modified_keystroke(self, key_code: int, modifiers: str) -> None:
+        """Send a key code with modifier(s) (e.g. 'control down')."""
+
 # ---------------------------------------------------------------------------
 # macOS AppleScript backend
 # ---------------------------------------------------------------------------
@@ -57,6 +61,8 @@ def _key_code(key: str) -> int:
         "space":     49,
         "tab":       48,
         "backspace": 51,
+        "page_up":  116,
+        "page_down": 121,
     }
     return codes.get(key, 36)
 
@@ -279,6 +285,12 @@ class AppleScriptInputBackend(InputBackend):
         await _run_applescript(
             _build_send_chars_script(text, target=self._target, focus=focus),
             "send_chars",
+        )
+
+    async def send_modified_keystroke(self, key_code: int, modifiers: str) -> None:
+        await _run_applescript(
+            _build_key_code_script(key_code, modifiers=modifiers, target=self._target),
+            f"keystroke(code={key_code}, mod={modifiers})",
         )
 
 

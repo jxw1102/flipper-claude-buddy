@@ -75,13 +75,28 @@ class Daemon:
             text = data.get("text", "")
             if text:
                 text = self._cmd_map.get(text, text)
-                await self._send_to_claude(text)
+                await self._input.send_chars(text + " ")
 
         elif msg_type == "yes":
             await self._send_to_claude("yes")
 
         elif msg_type == "enter":
             await self._send_keystroke("return")
+
+        elif msg_type == "pgup":
+            await self._send_keystroke("page_up")
+
+        elif msg_type == "pgdown":
+            await self._send_keystroke("page_down")
+
+        elif msg_type == "ctrl_o":
+            await self._input.send_modified_keystroke(31, "control down")
+
+        elif msg_type == "ctrl_e":
+            await self._input.send_modified_keystroke(14, "control down")
+
+        elif msg_type == "shift_tab":
+            await self._input.send_modified_keystroke(48, "shift down")
 
         elif msg_type == "down":
             await self._send_keystroke("down")

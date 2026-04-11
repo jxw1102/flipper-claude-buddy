@@ -56,3 +56,8 @@ int protocol_build_perm_resp(char* buf, int buf_size, bool allow, bool always, b
 int protocol_build_interrupt(char* buf, int buf_size);
 int protocol_build_backspace(char* buf, int buf_size);
 int protocol_build_yes(char* buf, int buf_size);
+int protocol_build_pgup(char* buf, int buf_size);
+int protocol_build_pgdown(char* buf, int buf_size);
+int protocol_build_ctrl_o(char* buf, int buf_size);
+int protocol_build_ctrl_e(char* buf, int buf_size);
+int protocol_build_shift_tab(char* buf, int buf_size);

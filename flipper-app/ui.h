@@ -33,6 +33,11 @@ typedef enum {
     UiEventToggleMute,   // long-press Down: toggle sound mute
     UiEventYes,          // long-press Ok: type "yes" + enter
     UiEventOpenInfo,     // long-press Right: open info menu
+    UiEventPageUp,       // transcript mode: page up
+    UiEventPageDown,     // transcript mode: page down
+    UiEventCtrlO,        // transcript mode: Ctrl+O
+    UiEventCtrlE,        // transcript mode: Ctrl+E
+    UiEventShiftTab,     // toggle plan mode (Shift+Tab)
 } UiEventType;
 
 typedef enum {
@@ -79,14 +84,17 @@ typedef struct {
 } PermModel;
 
 typedef enum {
-    InfoPageMenu,   // top-level: Help / About
+    InfoPageMenu,   // top-level: Help / About / Transcript
     InfoPageHelp,
     InfoPageAbout,
+    InfoPageTranscript,
 } InfoPage;
 
 typedef struct {
     InfoPage page;
-    int index;  // selected item on menu page
+    int index;      // selected item on menu page
+    int scroll;     // scroll offset on help page
+    uint8_t anim_frame; // animation counter for about page character
 } InfoModel;
 
 typedef struct {
