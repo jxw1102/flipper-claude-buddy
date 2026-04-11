@@ -1,6 +1,7 @@
 name: Build Flipper App
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'flipper-app/**'
@@ -20,3 +21,14 @@ jobs:
 
       - name: Build FAP
         run: cd flipper-app && ufbt build
+
+      - name: Rename FAP with commit hash
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          cp ~/.ufbt/build/claude_buddy.fap ~/.ufbt/build/claude_buddy-${SHORT_SHA}.fap
+
+      - name: Upload FAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude_buddy-${{ github.sha }}
+          path: ~/.ufbt/build/claude_buddy-*.fap
