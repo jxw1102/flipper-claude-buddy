@@ -5,10 +5,14 @@ on:
   push:
     paths:
       - 'flipper-app/**'
+    tags:
+      - '*'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -22,13 +26,14 @@ jobs:
       - name: Build FAP
         run: cd flipper-app && ufbt build
 
-      - name: Rename FAP with commit hash
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          cp ~/.ufbt/build/claude_buddy.fap ~/.ufbt/build/claude_buddy-${SHORT_SHA}.fap
-
       - name: Upload FAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: claude_buddy-${{ github.sha }}
-          path: ~/.ufbt/build/claude_buddy-*.fap
+          name: claude_buddy
+          path: ~/.ufbt/build/claude_buddy.fap
+
+      - name: Create release and attach FAP
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ~/.ufbt/build/claude_buddy.fap

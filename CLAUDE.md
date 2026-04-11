@@ -119,10 +119,9 @@ The Flipper sends `hello` on the first received `ping` (from the GUI thread), no
 4. **`flipper-app/ui.c`** — update version string on the About page
 5. **`plugin/.claude-plugin/plugin.json`** — update `version`
 6. **`plugin/host-bridge/pyproject.toml`** — update `version`
-7. Commit, push, then tag and create a GitHub release:
+7. Commit, push, then tag:
    ```bash
    git tag X.Y
    git push origin X.Y
-   gh release create X.Y --title "X.Y" --notes-file flipper-app/CHANGELOG.md
    ```
-   The CI workflow (`.github/workflows/build-fap.yml`) builds the FAP artifact on push.
+   The CI workflow (`.github/workflows/build-fap.yml`) creates the GitHub release and attaches the built `.fap` automatically.
