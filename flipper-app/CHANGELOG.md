@@ -1,3 +1,9 @@
+## v0.4
+
+- Info menu (Hold ►): Help, Transcript, Plan/Code Mode, About.
+- Transcript scrolling with Page Up/Down and jump-to-top/bottom.
+- Flipper notifications for tool failures and elicitation prompts.
+
 ## v0.3
 
 - Auto-discover slash commands from user/project commands, skills, and enabled plugins.

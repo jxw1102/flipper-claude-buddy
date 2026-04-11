@@ -113,12 +113,13 @@ The Flipper sends `hello` on the first received `ping` (from the GUI thread), no
 
 ## Releasing a New Version
 
-1. **`flipper-app/application.fam`** — update `fap_version`
-2. **`flipper-app/ui.c`** — update version string on the About page
-3. **`plugin/.claude-plugin/plugin.json`** — update `version`
-4. **`plugin/host-bridge/pyproject.toml`** — update `version`
-5. **`flipper-app/CHANGELOG.md`** — add a new `## vX.Y` section at the top
-6. Commit, push, then tag and create a GitHub release:
+1. **Commit any uncommitted changes first** — the version bump should be its own clean commit.
+2. **`flipper-app/CHANGELOG.md`** — add a new `## vX.Y` section at the top, summarizing commits since the previous version.
+3. **`flipper-app/application.fam`** — update `fap_version`
+4. **`flipper-app/ui.c`** — update version string on the About page
+5. **`plugin/.claude-plugin/plugin.json`** — update `version`
+6. **`plugin/host-bridge/pyproject.toml`** — update `version`
+7. Commit, push, then tag and create a GitHub release:
    ```bash
    git tag X.Y
    git push origin X.Y
