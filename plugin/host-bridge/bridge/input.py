@@ -2,8 +2,14 @@
 
 Backends
 --------
-AppleScriptInputBackend (default on macOS)
+AppleScriptInputBackend (macOS only)
     Uses osascript / System Events to inject keystrokes.
+
+XdotoolInputBackend (Linux X11 only)
+    Uses xdotool to inject keystrokes into the focused or targeted window.
+
+NullInputBackend
+    No-op fallback used when no platform backend is available.
 
 Factory
 -------
@@ -85,6 +91,7 @@ class InputTarget:
     term_session_id: str = ""
     iterm_session_id: str = ""
     tty: str = ""
+    window_id: str = ""  # X11 window ID (Linux only, set by VTE terminals)
 
     @classmethod
     def from_payload(cls, payload: dict[str, str] | None) -> "InputTarget | None":
@@ -97,6 +104,7 @@ class InputTarget:
             term_session_id=_clean_target_value(payload.get("term_session_id")),
             iterm_session_id=_clean_target_value(payload.get("iterm_session_id")),
             tty=_clean_target_value(payload.get("tty")),
+            window_id=_clean_target_value(payload.get("window_id")),
         )
         if not any(
             (
@@ -105,6 +113,7 @@ class InputTarget:
                 target.term_session_id,
                 target.iterm_session_id,
                 target.tty,
+                target.window_id,
             )
         ):
             return None
@@ -116,6 +125,8 @@ class InputTarget:
             parts.append(f"app={self.app_name}")
         if self.tty:
             parts.append(f"tty={self.tty}")
+        if self.window_id:
+            parts.append(f"window_id={self.window_id}")
         if self.term_session_id:
             parts.append(f"term_session_id={self.term_session_id}")
         if self.iterm_session_id:
@@ -295,14 +306,173 @@ class AppleScriptInputBackend(InputBackend):
 
 
 # ---------------------------------------------------------------------------
+# Null backend (fallback)
+# ---------------------------------------------------------------------------
+
+class NullInputBackend(InputBackend):
+    """No-op fallback when no platform input backend is available."""
+
+    _warned: bool = False
+
+    def _warn(self) -> None:
+        if not NullInputBackend._warned:
+            NullInputBackend._warned = True
+            log.warning(
+                "No input backend available on this platform — "
+                "Flipper button-to-keystroke forwarding is disabled. "
+                "On Linux install xdotool (apt install xdotool) to enable it."
+            )
+
+    async def send_ctrl_c(self) -> None:
+        self._warn()
+
+    async def send_keystroke(self, key: str) -> None:
+        self._warn()
+
+    async def send_text(self, text: str) -> None:
+        self._warn()
+
+    async def send_chars(self, text: str, *, focus: bool = True) -> None:
+        self._warn()
+
+    async def send_modified_keystroke(self, key_code: int, modifiers: str) -> None:
+        self._warn()
+
+
+# ---------------------------------------------------------------------------
+# Linux xdotool backend
+# ---------------------------------------------------------------------------
+
+# Mapping from abstract key names to X11 keysyms used by xdotool
+_XDOTOOL_KEY_NAMES: dict[str, str] = {
+    "return":    "Return",
+    "escape":    "Escape",
+    "down":      "Down",
+    "up":        "Up",
+    "left":      "Left",
+    "right":     "Right",
+    "space":     "space",
+    "tab":       "Tab",
+    "backspace": "BackSpace",
+    "page_up":   "Prior",
+    "page_down": "Next",
+}
+
+# macOS keycode → X11 keysym (only codes actually used by the bridge)
+_MACOS_KEYCODE_TO_XSYM: dict[int, str] = {
+    8:   "c",        # Ctrl+C
+    36:  "Return",
+    48:  "Tab",
+    49:  "space",
+    51:  "BackSpace",
+    53:  "Escape",
+    116: "Prior",
+    121: "Next",
+    125: "Down",
+}
+
+# macOS modifier phrase → xdotool modifier prefix
+_MACOS_MOD_TO_XDOTOOL: dict[str, str] = {
+    "control down": "ctrl",
+    "shift down":   "shift",
+    "option down":  "alt",
+    "command down": "super",
+}
+
+
+async def _run_xdotool(args: list[str], context: str) -> None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "xdotool", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            message = stderr.decode().strip() or stdout.decode().strip() or f"rc={proc.returncode}"
+            log.warning("%s failed: %s", context, message)
+    except Exception as e:
+        log.error("%s error: %s", context, e)
+
+
+class XdotoolInputBackend(InputBackend):
+    """Linux X11 input backend using xdotool."""
+
+    def __init__(self) -> None:
+        self._target: InputTarget | None = None
+
+    def set_target(self, target: dict[str, str] | None) -> None:
+        self._target = InputTarget.from_payload(target)
+        log.info(
+            "Input target set: %s",
+            self._target.describe() if self._target else "active window",
+        )
+
+    def _window_args(self) -> list[str]:
+        """Return --window <id> args if a window ID is known, else empty list."""
+        if self._target and self._target.window_id:
+            return ["--window", self._target.window_id]
+        return []
+
+    async def _focus(self) -> None:
+        if self._target and self._target.window_id:
+            await _run_xdotool(
+                ["windowfocus", "--sync", self._target.window_id],
+                "focus",
+            )
+
+    async def send_ctrl_c(self) -> None:
+        await self._focus()
+        await _run_xdotool([*self._window_args(), "key", "--clearmodifiers", "ctrl+c"], "Ctrl+C")
+
+    async def send_keystroke(self, key: str) -> None:
+        xsym = _XDOTOOL_KEY_NAMES.get(key, key)
+        await self._focus()
+        await _run_xdotool([*self._window_args(), "key", "--clearmodifiers", xsym], f"keystroke({key})")
+
+    async def send_text(self, text: str) -> None:
+        await self._focus()
+        await _run_xdotool(
+            [*self._window_args(), "type", "--clearmodifiers", "--", text],
+            "type",
+        )
+        await _run_xdotool([*self._window_args(), "key", "Return"], "Return")
+
+    async def send_chars(self, text: str, *, focus: bool = True) -> None:
+        if focus:
+            await self._focus()
+        await _run_xdotool(
+            [*self._window_args(), "type", "--clearmodifiers", "--", text],
+            "type_chars",
+        )
+
+    async def send_modified_keystroke(self, key_code: int, modifiers: str) -> None:
+        xsym = _MACOS_KEYCODE_TO_XSYM.get(key_code, str(key_code))
+        xmod = _MACOS_MOD_TO_XDOTOOL.get(modifiers.lower().strip())
+        combo = f"{xmod}+{xsym}" if xmod else xsym
+        await self._focus()
+        await _run_xdotool(
+            [*self._window_args(), "key", "--clearmodifiers", combo],
+            f"keystroke(code={key_code}, mod={modifiers})",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
 def create_backend() -> InputBackend:
-    import sys
     if sys.platform == "darwin":
         return AppleScriptInputBackend()
-    raise NotImplementedError(
-        f"No input backend available for platform {sys.platform!r}. "
-        "Implement InputBackend and register it in input.create_backend()."
-    )
+    if sys.platform == "linux":
+        import shutil
+        if shutil.which("xdotool"):
+            log.info("Input backend: xdotool (Linux X11)")
+            return XdotoolInputBackend()
+        log.warning(
+            "xdotool not found — keystroke forwarding disabled. "
+            "Install it with: sudo apt install xdotool"
+        )
+        return NullInputBackend()
+    log.warning("No input backend for platform %r — keystroke forwarding disabled.", sys.platform)
+    return NullInputBackend()

@@ -12,16 +12,26 @@ import sys
 
 
 TERM_PROGRAM_APP_NAMES = {
+    # macOS terminals
     "Apple_Terminal": "Terminal",
     "Terminal": "Terminal",
     "Terminal.app": "Terminal",
     "iTerm.app": "iTerm",
     "iTerm2": "iTerm",
+    # cross-platform
     "vscode": "Visual Studio Code",
     "WarpTerminal": "Warp",
     "WezTerm": "WezTerm",
     "Hyper": "Hyper",
     "Ghostty": "Ghostty",
+    # Linux terminals
+    "gnome-terminal": "GNOME Terminal",
+    "konsole": "Konsole",
+    "xterm": "XTerm",
+    "alacritty": "Alacritty",
+    "kitty": "kitty",
+    "tilix": "Tilix",
+    "xfce4-terminal": "Xfce Terminal",
 }
 
 
@@ -79,6 +89,9 @@ def build_target() -> dict[str, str]:
         "term_session_id": (os.environ.get("TERM_SESSION_ID") or "").strip(),
         "iterm_session_id": (os.environ.get("ITERM_SESSION_ID") or "").strip(),
         "tty": detect_tty(),
+        # X11 window ID — set by VTE-based terminals (gnome-terminal, kitty, etc.)
+        # Used by XdotoolInputBackend on Linux to focus the correct window.
+        "window_id": (os.environ.get("WINDOWID") or "").strip(),
     }
     material = json.dumps(target, sort_keys=True, separators=(",", ":")).encode()
     target["session_key"] = hashlib.sha1(material).hexdigest()[:16]

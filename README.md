@@ -2,7 +2,7 @@
 
 Turn your Flipper Zero into a physical companion for Claude Code. Get tactile feedback for every AI action — feel the difference between a completed task, an error, and an approval request — and control Claude with real buttons instead of typing.
 
-> macOS only for now.
+> Supports macOS and Linux. Windows is not tested.
 
 ## What it does
 
@@ -57,15 +57,34 @@ Go to **Applications → USB → Claude Buddy**. You'll hear the startup fanfare
 
 Connects over USB (plug-and-play) or Bluetooth LE — whichever is available. USB is preferred when the cable is plugged in; it falls back to BLE automatically.
 
-**First-time Bluetooth pairing:** on first BLE connection macOS will pair with the Flipper. Accept the pairing prompt on both sides. If the connection fails after a firmware flash or factory reset, remove the Flipper from macOS System Settings → Bluetooth and let it re-pair.
+**macOS — First-time Bluetooth pairing:** on first BLE connection macOS will pair with the Flipper. Accept the pairing prompt on both sides. If the connection fails after a firmware flash or factory reset, remove the Flipper from System Settings → Bluetooth and let it re-pair.
 
-**Bluetooth permission:** macOS requires Terminal (or your terminal app) to have Bluetooth access. Grant it in System Settings → Privacy & Security → Bluetooth.
+**macOS — Bluetooth permission:** Terminal (or your terminal app) must have Bluetooth access. Grant it in System Settings → Privacy & Security → Bluetooth.
+
+**Linux — USB:** Flipper appears as `/dev/ttyACM*`. No additional drivers needed. If you get a permission error, add your user to the `dialout` group:
+```bash
+sudo usermod -aG dialout $USER  # log out and back in to apply
+```
+
+**Linux — Keystroke forwarding:** Flipper button presses are forwarded to your terminal via `xdotool` (X11 only). Install it if needed:
+```bash
+sudo apt install xdotool
+```
+Wayland is not yet supported for keystroke forwarding.
+
+**Linux — BLE:** BLE transport works via BlueZ. Make sure BlueZ is installed and running:
+```bash
+sudo apt install bluetooth bluez
+sudo systemctl enable --now bluetooth
+sudo usermod -aG bluetooth $USER  # log out and back in to apply
+```
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| Flipper not found over USB | Make sure no other app (qFlipper, Chrome serial, etc.) is using the USB serial port — only one process can claim it at a time. Also try restarting the Flipper by holding **Back + Left**. If it still fails, set `FLIPPER_SERIAL_PORT=/dev/cu.usbmodemXXX` explicitly. |
+| Flipper not found over USB (macOS) | Make sure no other app (qFlipper, Chrome serial, etc.) is using the port. If it still fails, set `FLIPPER_SERIAL_PORT=/dev/cu.usbmodemXXX` explicitly. |
+| Flipper not found over USB (Linux) | Check `ls /dev/ttyACM*` — if empty, try a different USB cable. If the port exists but access is denied, run `sudo usermod -aG dialout $USER` and log out/in. Set `FLIPPER_SERIAL_PORT=/dev/ttyACMX` explicitly if needed. |
 | Flipper not found over BLE | Make sure Bluetooth is on and the app is running on the Flipper |
 | No sound on task complete | Check that the bridge is running: `cat /tmp/claude-flipper-bridge.log` |
 

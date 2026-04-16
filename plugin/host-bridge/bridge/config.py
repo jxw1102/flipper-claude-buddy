@@ -1,6 +1,7 @@
 """Configuration for the host bridge daemon."""
 
 import os
+import sys
 from pathlib import Path
 
 SOCKET_PATH = os.environ.get(
@@ -20,9 +21,11 @@ SPACE_REPEAT_INTERVAL = 0.01
 # ---------------------------------------------------------------------------
 # Dictation backend
 # ---------------------------------------------------------------------------
-# "macos"  — macOS native dictation via AppleScript + pmset (default)
+# "macos"  — macOS native dictation via AppleScript + pmset (default on macOS)
 # "custom" — user-supplied shell commands (see DICTATION_*_CMD below)
-DICTATION_BACKEND = os.environ.get("FLIPPER_DICTATION_BACKEND", "macos")
+# "none"   — disabled (default on non-macOS)
+_default_dictation = "macos" if sys.platform == "darwin" else "none"
+DICTATION_BACKEND = os.environ.get("FLIPPER_DICTATION_BACKEND", _default_dictation)
 
 # Shell command to START dictation (required when DICTATION_BACKEND="custom")
 DICTATION_START_CMD = os.environ.get("FLIPPER_DICTATION_START_CMD", "")
@@ -57,8 +60,8 @@ BT_WRITE_CHUNK   = 128  # max bytes per BLE write; capped to negotiated MTU-3 at
 
 # Dual CDC mode: Flipper exposes two serial ports.
 # Channel 0 = CLI (first port), Channel 1 = our app (second port).
-# On macOS, the second port typically has a higher suffix number.
-SERIAL_GLOB_PATTERN = "/dev/cu.usbmodem*"
+# On macOS the second port has a higher suffix; on Linux both appear as ttyACM*.
+SERIAL_GLOB_PATTERN = "/dev/ttyACM*" if sys.platform == "linux" else "/dev/cu.usbmodem*"
 
 # Project root for scanning .claude/commands/
 PROJECT_DIR = os.environ.get(

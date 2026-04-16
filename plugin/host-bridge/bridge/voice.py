@@ -2,13 +2,16 @@
 
 Backends
 --------
-MacOSDictationBackend (default)
+MacOSDictationBackend (macOS only)
     Triggers macOS native dictation via AppleScript (Edit menu) and detects
     active state via pmset power assertions.
 
 CustomDictationBackend
     Runs user-supplied shell commands for start / stop / activity check.
     Configure via env vars or config.py (see config.DICTATION_* settings).
+
+NullDictationBackend
+    No-op backend used when dictation is disabled (default on non-macOS).
 
 Factory
 -------
@@ -115,6 +118,23 @@ class MacOSDictationBackend(DictationBackend):
 
 
 # ---------------------------------------------------------------------------
+# Null backend (disabled / unsupported platform)
+# ---------------------------------------------------------------------------
+
+class NullDictationBackend(DictationBackend):
+    """No-op backend used when dictation is disabled or unavailable."""
+
+    async def start(self) -> None:
+        log.warning(
+            "Dictation is not configured on this platform. "
+            "Set FLIPPER_DICTATION_BACKEND=custom and FLIPPER_DICTATION_START_CMD to enable it."
+        )
+
+    def is_active(self) -> bool:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Custom shell-command backend
 # ---------------------------------------------------------------------------
 
@@ -197,6 +217,10 @@ def create_backend() -> DictationBackend:
 
     backend_type = config.DICTATION_BACKEND.lower()
 
+    if backend_type == "none":
+        log.info("Dictation backend: none (disabled)")
+        return NullDictationBackend()
+
     if backend_type == "macos":
         log.info("Dictation backend: macOS native")
         return MacOSDictationBackend()
@@ -220,5 +244,5 @@ def create_backend() -> DictationBackend:
 
     raise ValueError(
         f"Unknown DICTATION_BACKEND={backend_type!r}. "
-        "Valid values: 'macos', 'custom'."
+        "Valid values: 'macos', 'custom', 'none'."
     )
