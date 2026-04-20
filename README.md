@@ -61,6 +61,8 @@ Connects over USB (plug-and-play) or Bluetooth LE — whichever is available. US
 
 **macOS — Bluetooth permission:** Terminal (or your terminal app) must have Bluetooth access. Grant it in System Settings → Privacy & Security → Bluetooth.
 
+**macOS — Accessibility permission (required for keystroke forwarding):** Flipper button presses are delivered to your terminal via AppleScript (`osascript`), which needs Accessibility permission. Grant it in System Settings → Privacy & Security → Accessibility and toggle on your terminal app (Terminal, iTerm2, WezTerm, Alacritty, Ghostty, etc.). Without this, the Flipper will see Claude's status (e.g. "thinking...") but pressing OK, LEFT, RIGHT, etc. will do nothing. If your terminal doesn't prompt automatically, add it manually. The bridge log will show `osascript is not allowed to send keystrokes` when this permission is missing. Voice dictation (UP) also depends on this.
+
 **Linux — USB:** Flipper appears as `/dev/ttyACM*`. No additional drivers needed. If you get a permission error, add your user to the `dialout` group:
 ```bash
 sudo usermod -aG dialout $USER  # log out and back in to apply
@@ -87,6 +89,7 @@ sudo usermod -aG bluetooth $USER  # log out and back in to apply
 | Flipper not found over USB (Linux) | Check `ls /dev/ttyACM*` — if empty, try a different USB cable. If the port exists but access is denied, run `sudo usermod -aG dialout $USER` and log out/in. Set `FLIPPER_SERIAL_PORT=/dev/ttyACMX` explicitly if needed. |
 | Flipper not found over BLE | Make sure Bluetooth is on and the app is running on the Flipper |
 | No sound on task complete | Check that the bridge is running: `cat /tmp/claude-flipper-bridge.log` |
+| Buttons do nothing / `osascript is not allowed to send keystrokes` in log (macOS) | Grant your terminal app Accessibility permission in System Settings → Privacy & Security → Accessibility. Terminals like WezTerm, Alacritty, or Ghostty often don't prompt automatically — add them manually. |
 
 ## Support
 
