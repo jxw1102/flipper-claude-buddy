@@ -1,6 +1,9 @@
 #include "ui.h"
+#include "app_settings.h"
+#include "nus_transcript.h"
 #include <gui/elements.h>
 #include <string.h>
+#include <stdio.h>
 
 // Default slash commands (shown until bridge sends an updated list)
 static const char* default_menu_items[] = {
@@ -428,19 +431,25 @@ static void status_draw(Canvas* canvas, void* model) {
     // Transport mode — only when connected
     if(m->connected) {
         if(m->transport_mode) {
-            // BLE: draw signal bars (4 bars, increasing height, at right of header)
-            // Bar positions x: 113, 115, 117, 119 — just left of the claude dot (124)
-            const int bx = 113;
-            const int by = 6; // bottom y of all bars
-            const int heights[4] = {2, 3, 4, 5};
-            for(int i = 0; i < 4; i++) {
-                int top = by - heights[i] + 1;
-                if(i < (int)m->rssi_bars) {
-                    canvas_draw_line(canvas, bx + i * 2, top, bx + i * 2, by);
-                } else {
-                    // Empty bar: just top and bottom dots
-                    canvas_draw_dot(canvas, bx + i * 2, top);
-                    canvas_draw_dot(canvas, bx + i * 2, by);
+            /* Signal bars are only meaningful in Bridge mode — the Python
+             * host bridge reports RSSI in its pings.  In Desktop mode the
+             * Anthropic protocol has no such field, so the bars would
+             * just show a fixed value (always 0 or stale).  Hide them. */
+            if(app_settings_get_ble_mode() != BleModeDesktop) {
+                // BLE: draw signal bars (4 bars, increasing height, at right of header)
+                // Bar positions x: 113, 115, 117, 119 — just left of the claude dot (124)
+                const int bx = 113;
+                const int by = 6; // bottom y of all bars
+                const int heights[4] = {2, 3, 4, 5};
+                for(int i = 0; i < 4; i++) {
+                    int top = by - heights[i] + 1;
+                    if(i < (int)m->rssi_bars) {
+                        canvas_draw_line(canvas, bx + i * 2, top, bx + i * 2, by);
+                    } else {
+                        // Empty bar: just top and bottom dots
+                        canvas_draw_dot(canvas, bx + i * 2, top);
+                        canvas_draw_dot(canvas, bx + i * 2, by);
+                    }
                 }
             }
         } else {
@@ -671,8 +680,17 @@ static bool menu_input(InputEvent* event, void* context) {
 
 // ── Info View ────────────────────────────────────────────────────
 
-#define INFO_MENU_COUNT 4
-static const char* info_menu_items[] = {"Help", "Transcript", "Plan/Code Mode", "About"};
+#define INFO_MENU_COUNT 5
+/* Order: BLE mode toggle on top, Help just before About.  The BLE row
+ * is rendered dynamically — label shows the *current* mode so user
+ * sees what's active and toggles to the other. */
+#define INFO_IDX_BLE      0
+#define INFO_IDX_TRANS    1
+#define INFO_IDX_SHIFTTAB 2
+#define INFO_IDX_HELP     3
+#define INFO_IDX_ABOUT    4
+static const char* info_menu_items[INFO_MENU_COUNT] = {
+    NULL /* BLE mode */, "Transcript", "Shift+Tab", "Help", "About"};
 
 static const char* about_lines[] = {
     "Claude Buddy",
@@ -761,18 +779,29 @@ static void info_draw(Canvas* canvas, void* model) {
 
     if(m->page == InfoPageMenu) {
         draw_header(canvas, "MENU", false);
-        const int item_h = 10;
+        /* 5 items in 39px of list space (y=14..53, footer at 53). */
+        const int item_h = 8;
         const int list_y = 14;
         for(int i = 0; i < INFO_MENU_COUNT; i++) {
             int by = list_y + i * item_h;
+            const char* label = info_menu_items[i];
+            char ble_label[24]; /* "BLE mode: Desktop" = 17 + NUL */
+            if(i == INFO_IDX_BLE) {
+                snprintf(
+                    ble_label,
+                    sizeof(ble_label),
+                    "BLE mode: %s",
+                    app_settings_get_ble_mode() == BleModeDesktop ? "Desktop" : "Bridge");
+                label = ble_label;
+            }
             canvas_set_font(canvas, FontSecondary);
             if(i == m->index) {
                 canvas_draw_rbox(canvas, 1, by, 121, item_h, 1);
                 canvas_set_color(canvas, ColorWhite);
-                canvas_draw_str(canvas, 5, by + 7, info_menu_items[i]);
+                canvas_draw_str(canvas, 5, by + 6, label);
                 canvas_set_color(canvas, ColorBlack);
             } else {
-                canvas_draw_str(canvas, 5, by + 7, info_menu_items[i]);
+                canvas_draw_str(canvas, 5, by + 6, label);
             }
         }
         draw_footer_sep(canvas);
@@ -826,18 +855,45 @@ static void info_draw(Canvas* canvas, void* model) {
     } else if(m->page == InfoPageTranscript) {
         draw_header(canvas, "TRANSCRIPT", false);
         canvas_set_font(canvas, FontSecondary);
-        int y = 19;
-        draw_help_icon(canvas, 2, y, HelpBtnUp);
-        canvas_draw_str(canvas, 10, y, "Page Up");
-        y += HELP_LINE_H;
-        draw_help_icon(canvas, 2, y, HelpBtnDown);
-        canvas_draw_str(canvas, 10, y, "Page Down");
-        y += HELP_LINE_H;
-        draw_help_icon(canvas, 2, y, HelpBtnLeft);
-        canvas_draw_str(canvas, 10, y, "Ctrl+O");
-        y += HELP_LINE_H;
-        draw_help_icon(canvas, 2, y, HelpBtnRight);
-        canvas_draw_str(canvas, 10, y, "Ctrl+E");
+        if(app_settings_get_ble_mode() == BleModeDesktop) {
+            /* Desktop mode: show the ring buffer (newest first).  Up/Down
+             * scroll; each line clipped to the visible width. */
+            int total = nus_transcript_count();
+            if(total == 0) {
+                canvas_draw_str_aligned(canvas, 63, 31, AlignCenter, AlignCenter, "(empty)");
+            } else {
+                const int visible = 4;
+                const int item_h = 10;
+                int start = m->scroll;
+                if(start < 0) start = 0;
+                if(start > total - 1) start = total - 1;
+                int y = 19;
+                for(int i = 0; i < visible && (start + i) < total; i++) {
+                    char line[NUS_TRANSCRIPT_LINE_MAX];
+                    if(nus_transcript_get(start + i, line, sizeof(line))) {
+                        canvas_draw_str(canvas, 2, y, line);
+                    }
+                    y += item_h;
+                }
+                draw_scrollbar(canvas, start, total, 14, 14 + visible * item_h);
+            }
+        } else {
+            /* Bridge mode: this page is a remote for the host CLI — the
+             * buttons here forward page-up / -down / Ctrl+O / Ctrl+E as
+             * keypresses via the Python bridge. */
+            int y = 19;
+            draw_help_icon(canvas, 2, y, HelpBtnUp);
+            canvas_draw_str(canvas, 10, y, "Page Up");
+            y += HELP_LINE_H;
+            draw_help_icon(canvas, 2, y, HelpBtnDown);
+            canvas_draw_str(canvas, 10, y, "Page Down");
+            y += HELP_LINE_H;
+            draw_help_icon(canvas, 2, y, HelpBtnLeft);
+            canvas_draw_str(canvas, 10, y, "Ctrl+O");
+            y += HELP_LINE_H;
+            draw_help_icon(canvas, 2, y, HelpBtnRight);
+            canvas_draw_str(canvas, 10, y, "Ctrl+E");
+        }
         draw_footer_sep(canvas);
         hint_back(canvas, "Back");
     }
@@ -862,13 +918,26 @@ static bool info_input(InputEvent* event, void* context) {
             return true;
         }
         if(event->key == InputKeyOk) {
-            if(m->index == 2) { // Plan Mode — send Shift+Tab, stay on menu
+            if(m->index == INFO_IDX_BLE) {
+                BleMode cur = app_settings_get_ble_mode();
+                BleMode next = (cur == BleModeDesktop) ? BleModeBridge : BleModeDesktop;
+                app_settings_set_ble_mode(next);
+                view_commit_model(ui->info_view, true);
+                if(ui->event_callback)
+                    ui->event_callback(UiEventToggleBleMode, NULL, ui->event_context);
+                return true;
+            }
+            if(m->index == INFO_IDX_SHIFTTAB) {
                 view_commit_model(ui->info_view, false);
                 if(ui->event_callback)
                     ui->event_callback(UiEventShiftTab, NULL, ui->event_context);
                 return true;
             }
-            const InfoPage pages[] = {InfoPageHelp, InfoPageTranscript, 0, InfoPageAbout};
+            /* Map remaining entries to their sub-pages.  BLE (0) and
+             * Shift+Tab (2) are handled above; their entries here are
+             * placeholders. */
+            const InfoPage pages[INFO_MENU_COUNT] = {
+                0, InfoPageTranscript, 0, InfoPageHelp, InfoPageAbout};
             m->page = pages[m->index];
             m->scroll = 0;
             view_commit_model(ui->info_view, true);
@@ -896,6 +965,31 @@ static bool info_input(InputEvent* event, void* context) {
             return true;
         }
     } else if(m->page == InfoPageTranscript) {
+        bool desktop = app_settings_get_ble_mode() == BleModeDesktop;
+        if(desktop) {
+            /* Local scroll of the ring buffer. */
+            int total = nus_transcript_count();
+            const int visible = 4;
+            int max_scroll = (total > visible) ? (total - visible) : 0;
+            if(event->key == InputKeyUp && m->scroll > 0) {
+                m->scroll--;
+                view_commit_model(ui->info_view, true);
+                return true;
+            }
+            if(event->key == InputKeyDown && m->scroll < max_scroll) {
+                m->scroll++;
+                view_commit_model(ui->info_view, true);
+                return true;
+            }
+            if(event->key == InputKeyBack) {
+                m->page = InfoPageMenu;
+                m->scroll = 0;
+                view_commit_model(ui->info_view, true);
+                return true;
+            }
+            return false;
+        }
+        /* Bridge mode: forward Page Up / Down / Ctrl+O / Ctrl+E to host. */
         view_commit_model(ui->info_view, false);
         if(event->key == InputKeyUp) {
             if(ui->event_callback) ui->event_callback(UiEventPageUp, NULL, ui->event_context);
