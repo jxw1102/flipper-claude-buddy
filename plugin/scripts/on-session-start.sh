@@ -70,8 +70,8 @@ if [ ! -S "$SOCKET" ]; then
             exit 0
         fi
     elif [ "$TRANSPORT" = "usb" ]; then
-        # USB-only mode — require a USB device
-        if ! ls /dev/cu.usbmodem* 1>/dev/null 2>&1; then
+        # USB-only mode — require a USB device (macOS: cu.usbmodem*, Linux: ttyACM*)
+        if ! ls /dev/cu.usbmodem* /dev/ttyACM* 1>/dev/null 2>&1; then
             exit 0
         fi
     fi

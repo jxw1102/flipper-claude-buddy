@@ -110,6 +110,33 @@ The Flipper sends `hello` on the first received `ping` (from the GUI thread), no
 - PID: `/tmp/claude-flipper-bridge.pid`
 - Log: `/tmp/claude-flipper-bridge.log`
 - Session refcount: `/tmp/claude-flipper-bridge.refcount`
+- Turn stats: `/tmp/claude-flipper-turn-stats.json` — tool usage counts written by `on-post-tool-use.py`, read by `on-stop.sh`
+- Skip-stop flag: `/tmp/claude-flipper-skip-stop.flag` — set by hook Bash commands that write directly to the socket, prevents `on-stop.sh` from double-notifying
+- BT name cache: `$PLUGIN_DATA/bt_name` — auto-detected Bluetooth device name saved after first `hello`; used across sessions to skip re-scanning
+
+To inspect bridge activity: `tail -f /tmp/claude-flipper-bridge.log`
+
+## Platform Notes
+
+| Feature | macOS | Linux |
+|---------|-------|-------|
+| USB transport | `/dev/cu.usbmodem*` | `/dev/ttyACM*` (auto-detected) |
+| BLE transport | ✓ | not yet supported |
+| Keystroke forwarding | AppleScript (`osascript`) | `xdotool` (X11 only; install via `apt install xdotool`) |
+| Wayland keystroke | ✗ | not yet supported (`ydotool` needed) |
+| Dictation | macOS native (`FLIPPER_DICTATION_BACKEND=macos`) | disabled by default; use `FLIPPER_DICTATION_BACKEND=custom` |
+
+On Linux, `WINDOWID` (set by VTE-based terminals like gnome-terminal and kitty) is used by `xdotool` to focus the correct window. If `WINDOWID` is not set, keystrokes go to the active window.
+
+The bridge daemon, IPC socket, and all hook scripts are otherwise platform-agnostic.
+
+## Command Menu System
+
+The Flipper's button menu is populated from two optional text files (project overrides user):
+1. `~/.claude/flipper-commands.txt` — user-level shortcuts
+2. `$PROJECT_DIR/.claude/flipper-commands.txt` — project-level shortcuts
+
+Each line is a display label and command separated by a delimiter. The bridge also auto-discovers skill shortcuts from `.claude/commands/`. Commands are sent to the Flipper as a pipe-delimited `menu` message; the Flipper stores abbreviations in `_cmd_map` and expands the selection back to the host.
 
 ## Releasing a New Version
 
