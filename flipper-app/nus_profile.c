@@ -239,12 +239,22 @@ static void nus_profile_get_gap_config(GapConfig* config, FuriHalBleProfileParam
     furi_check(config);
     memset(config, 0, sizeof(*config));
 
-    /* Advertise a 16-bit UUID instead of the 128-bit NUS one to free
-     * up adv payload.  Claude Desktop's picker filters by name prefix
-     * "Claude"; the actual NUS service is still discoverable post-connect
-     * via GATT. */
+    /* Adv layout.  The primary adv PDU is 31 B; Flipper's gap.c calls
+     * aci_gap_set_discoverable with ADV_IND, which auto-inserts a 3 B
+     * Flags AD *and* a 3 B Tx Power AD (empirically verified — the
+     * scanner reports kCBAdvDataTxPowerLevel).  That leaves 25 B for
+     * our content.  A full 128-bit NUS UUID AD is 18 B on its own, so
+     * a "Claude" Local Name AD (8 B) would push the PDU to 32 B and
+     * aci_gap_set_discoverable fails with INVALID_LEN_PDU (err 146).
+     *
+     * Workaround: carry only a 16-bit placeholder UUID in the adv
+     * (4 B AD) and leave the real NUS UUID in the GATT service table,
+     * where any NUS-speaking central discovers it after connecting.
+     * Claude Desktop's picker filters by name prefix ("Claude"), not by
+     * service UUID in the adv, so dropping the 128-bit UUID from adv
+     * costs nothing at the picker layer. */
     config->adv_service.UUID_Type = UUID_TYPE_16;
-    config->adv_service.Service_UUID_16 = 0xABCD; /* arbitrary */
+    config->adv_service.Service_UUID_16 = 0xFEA0;
     config->appearance_char = 0x8600;
     /* Pairing is currently disabled — the NUS chars are ATTR_PERMISSION_NONE
      * so the link stays unencrypted (Anthropic's spec allows this), and
@@ -257,22 +267,32 @@ static void nus_profile_get_gap_config(GapConfig* config, FuriHalBleProfileParam
     config->conn_param.slave_latency = 0;
     config->conn_param.supervisor_timeout = 0;
 
+    /* Present Hardware Buddy mode under a BLE MAC distinct from stock
+     * Flipper firmware's (and from our own Bridge mode).  macOS
+     * CoreBluetooth keeps a sticky cache mapping MAC → CBPeripheral.name
+     * based on whatever name it saw first for that MAC — typically the
+     * stock firmware's "flip_XXXXX" GATT Device Name.  Claude Desktop's
+     * picker filters on CBPeripheral.name, so without a MAC difference
+     * the cached stock-firmware name shadows our advertised "Claude …"
+     * and the picker silently drops us.  XOR-ing one bit of the factory
+     * MAC keeps each Flipper's NUS-mode MAC unique-per-device, stable
+     * across app restarts, and reversible. */
     memcpy(config->mac_address, furi_hal_version_get_ble_mac(), sizeof(config->mac_address));
+    config->mac_address[0] ^= 0x01;
 
-    /* Upstream pattern: strlcpy(placeholder) + overwrite adv_name[0]=0x09.
-     * Budget: FURI_HAL_VERSION_DEVICE_NAME_LENGTH is 18 bytes; with the
-     * AD-type prefix and NUL terminator that leaves 16 visible chars.
-     * User may override the name via cmd:name; fall back to the default
-     * when unset.  The prefix 'x' gets overwritten below with 0x09, so
-     * it's irrelevant — must just be a non-NUL placeholder. */
+    /* Name — must start with "Claude" or Claude Desktop's picker drops
+     * us.  Default "Claude Flipper"; the `cmd: name` protocol message
+     * can override it, but only if the new name also starts with
+     * "Claude" (otherwise we silently fall back to default rather than
+     * making the device un-pickable). */
     char user_name[APP_SETTINGS_DEVNAME_MAX] = {0};
     const char* visible = "Claude Flipper";
-    if(app_settings_get_device_name(user_name, sizeof(user_name)) && user_name[0]) {
+    if(app_settings_get_device_name(user_name, sizeof(user_name)) && user_name[0]
+       && strncmp(user_name, "Claude", 6) == 0) {
         visible = user_name;
     }
-    config->adv_name[0] = 'x';
-    strlcpy(config->adv_name + 1, visible, FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1);
     config->adv_name[0] = 0x09; /* AD_TYPE_COMPLETE_LOCAL_NAME */
+    strlcpy(config->adv_name + 1, visible, FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1);
 }
 
 static const FuriHalBleProfileTemplate profile_callbacks = {

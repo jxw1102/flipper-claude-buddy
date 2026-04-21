@@ -206,6 +206,7 @@ enum {
     HelpBtnOk,
     HelpBtnDown,
     HelpBtnBack,
+    HelpBtnText, // sentinel: render desc as plain text (no icon, Hold, or colon)
 };
 static void draw_help_icon(Canvas* canvas, int x, int y, uint8_t button);
 
@@ -393,26 +394,76 @@ static void draw_claude(Canvas* canvas, int cx, int cy, uint8_t pose, uint8_t fr
 
 // ── Status View ──────────────────────────────────────────────────
 
+// Greedy word-wrap. Fills `lines` (up to `max_lines` × `line_cap`), returns
+// the line count. Breaks at spaces where possible, otherwise mid-word.
+static int wrap_text(
+    Canvas* canvas,
+    const char* text,
+    int max_width,
+    char (*lines)[32],
+    int max_lines) {
+    if(!canvas || !text || !*text || max_lines <= 0) return 0;
+    int nlines = 0;
+    const char* p = text;
+    char buf[32];
+    while(*p && nlines < max_lines) {
+        const char* start = p;
+        int last_space = -1;      // index (relative to start) of last fit-so-far space
+        int fit = 0;              // chars that fit on this line
+        int i = 0;
+        while(start[i]) {
+            int len = i + 1;
+            if(len >= (int)sizeof(buf)) break;
+            memcpy(buf, start, len);
+            buf[len] = '\0';
+            if((int)canvas_string_width(canvas, buf) > max_width) break;
+            if(start[i] == ' ') last_space = i;
+            fit = len;
+            i++;
+        }
+        int cut;
+        if(!start[fit]) {
+            cut = fit; // end of string fits
+        } else if(last_space > 0 && nlines + 1 < max_lines) {
+            cut = last_space; // break at space (keeps future lines available)
+        } else {
+            cut = (fit > 0) ? fit : 1; // mid-word break (last line or single long word)
+        }
+        if(cut > (int)sizeof(lines[0]) - 1) cut = (int)sizeof(lines[0]) - 1;
+        memcpy(lines[nlines], start, cut);
+        lines[nlines][cut] = '\0';
+        nlines++;
+        p = start + cut;
+        while(*p == ' ') p++;
+    }
+    return nlines;
+}
+
 static void status_draw(Canvas* canvas, void* model) {
     if(!canvas || !model) return;
     StatusModel* m = model;
     canvas_clear(canvas);
 
+    bool desktop = app_settings_get_ble_mode() == BleModeDesktop;
+
     // ── Header bar (light theme with bottom separator) ──
     canvas_set_font(canvas, FontSecondary);
 
     if(m->pose == PoseListening || m->space_hold_active) {
-        // Pulsing recording indicator centered in header
-        int tw = (int)canvas_string_width(canvas, "REC");
-        int total_w = 5 + 3 + tw;
-        int ox = 64 - total_w / 2;
-        if(m->anim_frame % 6 < 3)
-            canvas_draw_disc(canvas, ox + 2, 5, 2);
-        else
-            canvas_draw_circle(canvas, ox + 2, 5, 2);
-        canvas_draw_str(canvas, ox + 8, 8, "REC");
-    } else {
-        // Centered ▲ Mic hint
+        // Pulsing recording indicator centered in header (Bridge mode only —
+        // voice dictation isn't available in Desktop mode).
+        if(!desktop) {
+            int tw = (int)canvas_string_width(canvas, "REC");
+            int total_w = 5 + 3 + tw;
+            int ox = 64 - total_w / 2;
+            if(m->anim_frame % 6 < 3)
+                canvas_draw_disc(canvas, ox + 2, 5, 2);
+            else
+                canvas_draw_circle(canvas, ox + 2, 5, 2);
+            canvas_draw_str(canvas, ox + 8, 8, "REC");
+        }
+    } else if(!desktop) {
+        // Centered ▲ Mic hint (Bridge mode only)
         int tw = (int)canvas_string_width(canvas, "Mic");
         int total_w = 5 + 3 + tw;
         int ox = 64 - total_w / 2;
@@ -479,33 +530,62 @@ static void status_draw(Canvas* canvas, void* model) {
     // Status text (right of character)
     const char* main_text = m->connected ? "Ready" : "No connection";
     if(m->text[0] != '\0') main_text = m->text;
-    bool has_sub = m->subtext[0] != '\0';
-    bool show_hint = !has_sub && m->connected && m->text[0] == '\0';
 
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(
-        canvas, 77, (has_sub || show_hint) ? 25 : 31, AlignCenter, AlignCenter, main_text);
-    if(has_sub) {
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, 77, 37, AlignCenter, AlignCenter, m->subtext);
-    } else if(show_hint) {
-        canvas_set_font(canvas, FontSecondary);
-        // "Hold [►] for menu" with inline icon
-        int hw = (int)canvas_string_width(canvas, "Hold ");
-        int fw = (int)canvas_string_width(canvas, " for menu");
-        int sw = (int)canvas_string_width(canvas, " "); // space after icon
-        int total = hw + 5 + sw + fw; // 5px icon width + space
-        int hx = 77 - total / 2;
-        canvas_draw_str(canvas, hx, 39, "Hold ");
-        draw_help_icon(canvas, hx + hw, 39, HelpBtnRight);
-        canvas_draw_str(canvas, hx + hw + 6 + sw, 39, "for menu");
+    if(desktop) {
+        // Desktop mode has no subtext — wrap the main text across up to 4 lines.
+        canvas_set_font(canvas, FontPrimary);
+        char lines[4][32];
+        int nlines = wrap_text(canvas, main_text, 97, lines, 4);
+        if(nlines == 0) {
+            nlines = 1;
+            strncpy(lines[0], main_text, sizeof(lines[0]) - 1);
+            lines[0][sizeof(lines[0]) - 1] = '\0';
+        }
+        const int line_h = 10;
+        int total_h = nlines * line_h;
+        int y0 = (HDR_H + FTR_Y) / 2 - total_h / 2 + line_h / 2;
+        /* Left-align against the text column (x=30 starts just right of
+         * the Claude character at x=4..~22, matches wrap_text's 97 px
+         * width budget → right edge ≈ 127). */
+        for(int i = 0; i < nlines; i++) {
+            canvas_draw_str_aligned(
+                canvas, 30, y0 + i * line_h, AlignLeft, AlignCenter, lines[i]);
+        }
+    } else {
+        bool has_sub = m->subtext[0] != '\0';
+        bool show_hint = !has_sub && m->connected && m->text[0] == '\0';
+
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(
+            canvas, 77, (has_sub || show_hint) ? 25 : 31, AlignCenter, AlignCenter, main_text);
+        if(has_sub) {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str_aligned(canvas, 77, 37, AlignCenter, AlignCenter, m->subtext);
+        } else if(show_hint) {
+            canvas_set_font(canvas, FontSecondary);
+            // "Hold [►] for menu" with inline icon
+            int hw = (int)canvas_string_width(canvas, "Hold ");
+            int fw = (int)canvas_string_width(canvas, " for menu");
+            int sw = (int)canvas_string_width(canvas, " "); // space after icon
+            int total = hw + 5 + sw + fw; // 5px icon width + space
+            int hx = 77 - total / 2;
+            canvas_draw_str(canvas, hx, 39, "Hold ");
+            draw_help_icon(canvas, hx + hw, 39, HelpBtnRight);
+            canvas_draw_str(canvas, hx + hw + 6 + sw, 39, "for menu");
+        }
     }
 
     // ── Footer ──
     draw_footer_sep(canvas);
-    hint_left(canvas, "Esc");
-    hint_ok(canvas, "Enter");
-    hint_right(canvas, "Cmds");
+    if(desktop) {
+        /* Desktop (NUS) mode: key input isn't available, so Mic/Esc/Enter
+         * are hidden. Both short- and long-press Right open the info menu. */
+        hint_right(canvas, "Menu");
+    } else {
+        hint_left(canvas, "Esc");
+        hint_ok(canvas, "Enter");
+        hint_right(canvas, "Cmds");
+    }
 }
 
 static bool status_input(InputEvent* event, void* context) {
@@ -565,7 +645,12 @@ static bool status_input(InputEvent* event, void* context) {
         return true;
     }
     if(event->key == InputKeyRight && event->type == InputTypeShort) {
-        if(ui->event_callback) ui->event_callback(UiEventOpenMenu, NULL, ui->event_context);
+        /* Desktop mode: commands menu is useless (no keystrokes), so short-
+         * press goes to the info Menu — same as long-press. */
+        UiEventType evt = (app_settings_get_ble_mode() == BleModeDesktop)
+                              ? UiEventOpenInfo
+                              : UiEventOpenMenu;
+        if(ui->event_callback) ui->event_callback(evt, NULL, ui->event_context);
         return true;
     }
     if(event->key == InputKeyRight && event->type == InputTypeLong) {
@@ -615,8 +700,9 @@ static void menu_draw(Canvas* canvas, void* model) {
             canvas_set_font(canvas, FontSecondary);
 
             if(i == m->index) {
-                // Selected: rounded inverted highlight
-                canvas_draw_rbox(canvas, 1, by, 121, item_h, 1);
+                // Selected: rounded inverted highlight, shifted upward
+                // so it sits symmetrically around the glyph.
+                canvas_draw_rbox(canvas, 1, by - 2, 121, item_h + 1, 1);
                 canvas_set_color(canvas, ColorWhite);
                 canvas_draw_str(canvas, 5, by + 6, m->items[i]);
                 canvas_set_color(canvas, ColorBlack);
@@ -692,6 +778,30 @@ static bool menu_input(InputEvent* event, void* context) {
 static const char* info_menu_items[INFO_MENU_COUNT] = {
     NULL /* BLE mode */, "Transcript", "Shift+Tab", "Help", "About"};
 
+/* Shift+Tab is a Bridge-only action (the Flipper asks the host to send a
+ * Shift+Tab keystroke into the active shell); in Desktop mode there is no
+ * keystroke path, so hide the entry entirely. */
+static bool info_menu_item_visible(int idx) {
+    if(idx == INFO_IDX_SHIFTTAB && app_settings_get_ble_mode() == BleModeDesktop)
+        return false;
+    return true;
+}
+
+static int info_menu_step(int from, int delta) {
+    /* Walk `delta` (±1) visible slots from `from`, wrapping within the
+     * full menu; skip hidden items.  Returns `from` if no item is
+     * visible (shouldn't happen — BLE/Help/About are always shown). */
+    int i = from;
+    for(int n = 0; n < INFO_MENU_COUNT; n++) {
+        if(delta > 0)
+            i = (i < INFO_MENU_COUNT - 1) ? i + 1 : 0;
+        else
+            i = (i > 0) ? i - 1 : INFO_MENU_COUNT - 1;
+        if(info_menu_item_visible(i)) return i;
+    }
+    return from;
+}
+
 static const char* about_lines[] = {
     "Claude Buddy",
     "v0.4",
@@ -709,7 +819,12 @@ typedef struct {
     const char* desc;
 } HelpEntry;
 
-static const HelpEntry help_entries[] = {
+/* Bridge mode: most buttons forward keystrokes to the host terminal via
+ * the Python bridge.  Up is voice dictation, OK sends Enter, Left sends
+ * Esc, etc.  HelpBtnText entries render as plain-text lines (no icon)
+ * so we can mix a title and install instructions with the button rows. */
+static const HelpEntry help_entries_bridge[] = {
+    {HelpBtnText,  false, "Button actions:"},
     {HelpBtnUp,    false, "Voice dictation"},
     {HelpBtnUp,    true,  "Hold-to-talk"},
     {HelpBtnLeft,  false, "Interrupt (Esc)"},
@@ -722,8 +837,37 @@ static const HelpEntry help_entries[] = {
     {HelpBtnDown,  true,  "Mute"},
     {HelpBtnBack,  false, "Backspace"},
     {HelpBtnBack,  true,  "Exit app"},
+    {HelpBtnText,  false, ""},
+    {HelpBtnText,  false, "Install plugin:"},
+    {HelpBtnText,  false, "```"},
+    {HelpBtnText,  false, "claude plugin marketplace"},
+    {HelpBtnText,  false, "add jxw1102/flipper-"},
+    {HelpBtnText,  false, "claude-buddy"},
+    {HelpBtnText,  false, ""},
+    {HelpBtnText,  false, "claude plugin install"},
+    {HelpBtnText,  false, "flipper-claude-buddy@"},
+    {HelpBtnText,  false, "flipper-claude-buddy"},
+    {HelpBtnText,  false, "```"},
 };
-#define HELP_LINE_COUNT 12
+
+/* Desktop (NUS) mode: no keystroke path, so a button-mapping list is
+ * misleading.  Show a short onboarding/how-to instead.  Lines are sized
+ * to use the full content width (~123 px, ~22 chars at FontSecondary). */
+static const char* help_text_desktop[] = {
+    "How to connect:",
+    "",
+    "In Claude Desktop app:",
+    "1. Enable Developer Mode",
+    "   (Help > Troubleshoot).",
+    "2. Open Hardware Buddy",
+    "   from Developer menu.",
+    "3. Pick Flipper to pair.",
+    "",
+    "Hold Back to quit app.",
+};
+#define HELP_DESKTOP_LINES ((int)(sizeof(help_text_desktop) / sizeof(help_text_desktop[0])))
+#define HELP_BRIDGE_LINES ((int)(sizeof(help_entries_bridge) / sizeof(help_entries_bridge[0])))
+
 #define HELP_VISIBLE    4
 #define HELP_LINE_H     10
 #define HELP_COLON_X    31
@@ -779,24 +923,26 @@ static void info_draw(Canvas* canvas, void* model) {
 
     if(m->page == InfoPageMenu) {
         draw_header(canvas, "MENU", false);
-        /* 5 items in 39px of list space (y=14..53, footer at 53). */
+        /* Up to 5 items in 39px of list space (y=14..53, footer at 53).
+         * Hidden items collapse — we render with a visible-slot counter
+         * for y-position so there's no blank row in the middle. */
+        if(!info_menu_item_visible(m->index)) m->index = info_menu_step(m->index, 1);
         const int item_h = 8;
         const int list_y = 14;
+        int vpos = 0;
         for(int i = 0; i < INFO_MENU_COUNT; i++) {
-            int by = list_y + i * item_h;
+            if(!info_menu_item_visible(i)) continue;
+            int by = list_y + vpos * item_h;
+            vpos++;
             const char* label = info_menu_items[i];
-            char ble_label[24]; /* "BLE mode: Desktop" = 17 + NUL */
             if(i == INFO_IDX_BLE) {
-                snprintf(
-                    ble_label,
-                    sizeof(ble_label),
-                    "BLE mode: %s",
-                    app_settings_get_ble_mode() == BleModeDesktop ? "Desktop" : "Bridge");
-                label = ble_label;
+                label = (app_settings_get_ble_mode() == BleModeDesktop)
+                            ? "Claude Desktop (BLE)"
+                            : "Claude Code (USB/BLE)";
             }
             canvas_set_font(canvas, FontSecondary);
             if(i == m->index) {
-                canvas_draw_rbox(canvas, 1, by, 121, item_h, 1);
+                canvas_draw_rbox(canvas, 1, by - 2, 121, item_h + 1, 1);
                 canvas_set_color(canvas, ColorWhite);
                 canvas_draw_str(canvas, 5, by + 6, label);
                 canvas_set_color(canvas, ColorBlack);
@@ -809,20 +955,33 @@ static void info_draw(Canvas* canvas, void* model) {
         hint_back(canvas, "Back");
     } else if(m->page == InfoPageHelp) {
         draw_header(canvas, "HELP", false);
+        bool desktop = app_settings_get_ble_mode() == BleModeDesktop;
+        int total = desktop ? HELP_DESKTOP_LINES : HELP_BRIDGE_LINES;
+        int max_scroll = (total > HELP_VISIBLE) ? (total - HELP_VISIBLE) : 0;
+        if(m->scroll > max_scroll) m->scroll = max_scroll;
         int y = 19;
-        for(int i = 0; i < HELP_VISIBLE && (m->scroll + i) < HELP_LINE_COUNT; i++) {
-            const HelpEntry* e = &help_entries[m->scroll + i];
-            canvas_set_font(canvas, FontSecondary);
-            draw_help_icon(canvas, 2, y, e->button);
-            if(e->hold) {
-                canvas_draw_str(canvas, 9, y, "Hold");
+        canvas_set_font(canvas, FontSecondary);
+        for(int i = 0; i < HELP_VISIBLE && (m->scroll + i) < total; i++) {
+            int idx = m->scroll + i;
+            if(desktop) {
+                canvas_draw_str(canvas, 2, y, help_text_desktop[idx]);
+            } else {
+                const HelpEntry* e = &help_entries_bridge[idx];
+                if(e->button == HelpBtnText) {
+                    canvas_draw_str(canvas, 2, y, e->desc);
+                } else {
+                    draw_help_icon(canvas, 2, y, e->button);
+                    if(e->hold) canvas_draw_str(canvas, 9, y, "Hold");
+                    canvas_draw_str(canvas, HELP_COLON_X, y, ":");
+                    canvas_draw_str(canvas, HELP_DESC_X, y, e->desc);
+                }
             }
-            canvas_draw_str(canvas, HELP_COLON_X, y, ":");
-            canvas_draw_str(canvas, HELP_DESC_X, y, e->desc);
             y += HELP_LINE_H;
         }
-        draw_scrollbar(canvas, m->scroll, HELP_LINE_COUNT - HELP_VISIBLE + 1,
-                        HDR_H + 1, FTR_Y - 1);
+        if(total > HELP_VISIBLE) {
+            draw_scrollbar(canvas, m->scroll, max_scroll + 1,
+                            HDR_H + 1, FTR_Y - 1);
+        }
         draw_footer_sep(canvas);
         hint_back(canvas, "Back");
     } else if(m->page == InfoPageAbout) {
@@ -857,25 +1016,80 @@ static void info_draw(Canvas* canvas, void* model) {
         canvas_set_font(canvas, FontSecondary);
         if(app_settings_get_ble_mode() == BleModeDesktop) {
             /* Desktop mode: show the ring buffer (newest first).  Up/Down
-             * scroll; each line clipped to the visible width. */
+             * scroll; each line is right-clipped so it doesn't collide
+             * with the scrollbar track at x=125..127. */
             int total = nus_transcript_count();
             if(total == 0) {
                 canvas_draw_str_aligned(canvas, 63, 31, AlignCenter, AlignCenter, "(empty)");
             } else {
                 const int visible = 4;
                 const int item_h = 10;
+                const int text_area_w = 121; /* visible text window width */
+                int max_scroll = (total > visible) ? (total - visible) : 0;
                 int start = m->scroll;
                 if(start < 0) start = 0;
-                if(start > total - 1) start = total - 1;
-                int y = 19;
+                if(start > max_scroll) start = max_scroll;
+
+                /* Pass 1: read the visible lines into a local buffer and
+                 * find the widest one — determines the horizontal-scroll
+                 * ceiling. */
+                char lines[4][NUS_TRANSCRIPT_LINE_MAX];
+                int widths[4] = {0};
+                int shown = 0;
+                int max_w = 0;
                 for(int i = 0; i < visible && (start + i) < total; i++) {
-                    char line[NUS_TRANSCRIPT_LINE_MAX];
-                    if(nus_transcript_get(start + i, line, sizeof(line))) {
-                        canvas_draw_str(canvas, 2, y, line);
+                    if(nus_transcript_get(start + i, lines[i], sizeof(lines[i]))) {
+                        widths[i] = (int)canvas_string_width(canvas, lines[i]);
+                        if(widths[i] > max_w) max_w = widths[i];
+                        shown++;
+                    } else {
+                        lines[i][0] = '\0';
                     }
+                }
+                int max_h = (max_w > text_area_w) ? (max_w - text_area_w) : 0;
+                if(m->h_scroll < 0) m->h_scroll = 0;
+                if(m->h_scroll > max_h) m->h_scroll = max_h;
+
+                /* Pass 2: draw each line shifted by h_scroll. The vertical
+                 * scrollbar at x=125..127 is drawn after the text and
+                 * clips the right edge visually. */
+                int y = 19;
+                for(int i = 0; i < shown; i++) {
+                    canvas_draw_str(canvas, 2 - m->h_scroll, y, lines[i]);
                     y += item_h;
                 }
-                draw_scrollbar(canvas, start, total, 14, 14 + visible * item_h);
+
+                if(max_scroll > 0) {
+                    draw_scrollbar(canvas, start, max_scroll + 1,
+                                   HDR_H + 1, FTR_Y - 1);
+                }
+                /* Horizontal scroll thumb: 3 px tall, straddling the
+                 * footer separator (1 px above + the separator itself +
+                 * 1 px below → y = FTR_Y-1 .. FTR_Y+1). Track spans
+                 * x=0..93, ending right before the Back hint icon at
+                 * x≈97 so the thumb can visibly reach the right edge of
+                 * the available gutter. Thumb *width* mirrors the
+                 * vertical thumb's *height* (same draw_scrollbar rule)
+                 * so the two indicators look like a matched pair. */
+                if(max_h > 0) {
+                    /* Track spans the full screen width (x=0..127). The
+                     * thumb lives at y=FTR_Y-1..FTR_Y+1 (52..54), which
+                     * doesn't collide with the Back hint icon/label
+                     * below (y=55..63), so there's no need to dodge the
+                     * right side of the footer. Thumb width mirrors the
+                     * vertical thumb's height for a matched pair. */
+                    const int x0 = 0;
+                    const int x1 = 127;
+                    int v_track = (FTR_Y - 1) - (HDR_H + 1);
+                    int v_count = (max_scroll > 0) ? (max_scroll + 1) : 1;
+                    int tw = v_track / v_count;
+                    if(tw < 4) tw = 4;
+                    if(tw > x1 - x0 + 1) tw = x1 - x0 + 1;
+                    /* canvas_draw_box renders [tx, tx+tw-1]; at
+                     * h_scroll==max_h we want tx+tw-1 == x1. */
+                    int tx = x0 + (m->h_scroll * (x1 - x0 - tw + 1)) / max_h;
+                    canvas_draw_box(canvas, tx, FTR_Y - 1, tw, 3);
+                }
             }
         } else {
             /* Bridge mode: this page is a remote for the host CLI — the
@@ -908,12 +1122,12 @@ static bool info_input(InputEvent* event, void* context) {
 
     if(m->page == InfoPageMenu) {
         if(event->key == InputKeyUp) {
-            m->index = (m->index > 0) ? m->index - 1 : INFO_MENU_COUNT - 1;
+            m->index = info_menu_step(m->index, -1);
             view_commit_model(ui->info_view, true);
             return true;
         }
         if(event->key == InputKeyDown) {
-            m->index = (m->index < INFO_MENU_COUNT - 1) ? m->index + 1 : 0;
+            m->index = info_menu_step(m->index, +1);
             view_commit_model(ui->info_view, true);
             return true;
         }
@@ -940,6 +1154,7 @@ static bool info_input(InputEvent* event, void* context) {
                 0, InfoPageTranscript, 0, InfoPageHelp, InfoPageAbout};
             m->page = pages[m->index];
             m->scroll = 0;
+            m->h_scroll = 0;
             view_commit_model(ui->info_view, true);
             return true;
         }
@@ -949,12 +1164,16 @@ static bool info_input(InputEvent* event, void* context) {
             return true;
         }
     } else if(m->page == InfoPageHelp) {
+        int total = (app_settings_get_ble_mode() == BleModeDesktop)
+                        ? HELP_DESKTOP_LINES
+                        : HELP_BRIDGE_LINES;
+        int max_scroll = (total > HELP_VISIBLE) ? (total - HELP_VISIBLE) : 0;
         if(event->key == InputKeyUp && m->scroll > 0) {
             m->scroll--;
             view_commit_model(ui->info_view, true);
             return true;
         }
-        if(event->key == InputKeyDown && m->scroll < HELP_LINE_COUNT - HELP_VISIBLE) {
+        if(event->key == InputKeyDown && m->scroll < max_scroll) {
             m->scroll++;
             view_commit_model(ui->info_view, true);
             return true;
@@ -967,9 +1186,13 @@ static bool info_input(InputEvent* event, void* context) {
     } else if(m->page == InfoPageTranscript) {
         bool desktop = app_settings_get_ble_mode() == BleModeDesktop;
         if(desktop) {
-            /* Local scroll of the ring buffer. */
+            /* Local scroll of the ring buffer. Up/Down move through
+             * the lines; Left/Right pan horizontally for long lines
+             * (bounds re-clamped in the draw pass against current line
+             * widths). */
             int total = nus_transcript_count();
             const int visible = 4;
+            const int h_step = 30; /* ~5-6 chars per press */
             int max_scroll = (total > visible) ? (total - visible) : 0;
             if(event->key == InputKeyUp && m->scroll > 0) {
                 m->scroll--;
@@ -981,9 +1204,23 @@ static bool info_input(InputEvent* event, void* context) {
                 view_commit_model(ui->info_view, true);
                 return true;
             }
+            if(event->key == InputKeyLeft) {
+                m->h_scroll -= h_step;
+                if(m->h_scroll < 0) m->h_scroll = 0;
+                view_commit_model(ui->info_view, true);
+                return true;
+            }
+            if(event->key == InputKeyRight) {
+                m->h_scroll += h_step;
+                /* Upper bound enforced in draw pass (depends on visible
+                 * lines' widths, which we don't know here). */
+                view_commit_model(ui->info_view, true);
+                return true;
+            }
             if(event->key == InputKeyBack) {
                 m->page = InfoPageMenu;
                 m->scroll = 0;
+                m->h_scroll = 0;
                 view_commit_model(ui->info_view, true);
                 return true;
             }

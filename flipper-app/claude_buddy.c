@@ -725,24 +725,44 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         transport_send(app->transport, app->tx_buf, len);
         break;
 
-    case UiEventToggleBleMode:
-        /* UI already persisted the new setting. If we're currently on a BLE
-         * transport, swap it live so the user doesn't have to restart the
-         * app. USB transport is unaffected — new mode kicks in next time
-         * the cable is unplugged. */
+    case UiEventToggleBleMode: {
+        /* UI already persisted the new setting. Desktop mode always runs
+         * on BLE (USB is irrelevant there); Bridge mode picks transport
+         * based on the cable. Rebuild the transport live so the user
+         * doesn't have to restart the app. */
         app_notify(app, SoundCmd);
-        if(!detect_usb_cable()) {
-            if(app->transport) {
-                transport_stop(app->transport);
-                transport_free(app->transport);
-                app->transport = NULL;
-            }
-            app->transport = transport_ble_alloc();
-            app->hello_sent = false;
-            app_on_transport_mode_changed(app, true);
-            transport_start(app->transport, on_serial_data, app);
+        BleMode new_mode = app_settings_get_ble_mode();
+        bool want_bt = (new_mode == BleModeDesktop) || !detect_usb_cable();
+
+        if(app->transport) {
+            transport_stop(app->transport);
+            transport_free(app->transport);
+            app->transport = NULL;
+        }
+        if(app->usb_poll_timer) {
+            furi_timer_stop(app->usb_poll_timer);
+            furi_timer_free(app->usb_poll_timer);
+            app->usb_poll_timer = NULL;
+        }
+
+        app->transport = want_bt ? transport_ble_alloc() : transport_usb_alloc();
+        app->hello_sent = false;
+        app_on_transport_mode_changed(app, want_bt);
+        ui_set_transport_mode(app->ui, want_bt);
+        /* Clear any stale status text from the previous mode (e.g. a
+         * Bridge "Turn complete" lingering into Desktop, or a Desktop
+         * heartbeat msg lingering into Bridge) before the new transport
+         * has a chance to repaint. */
+        ui_show_status(app->ui, NULL, false);
+        transport_start(app->transport, on_serial_data, app);
+
+        if(!want_bt) {
+            /* Poll for USB removal so we auto-swap back to BLE. */
+            app->usb_poll_timer = furi_timer_alloc(usb_poll_cb, FuriTimerTypePeriodic, app);
+            furi_timer_start(app->usb_poll_timer, 5000);
         }
         break;
+    }
 
     case UiEventExitApp:
         ui_stop(app->ui);
@@ -784,8 +804,12 @@ int32_t claude_buddy_app(void* p) {
     nus_transcript_init();
     nus_charpack_init();
 
-    /* Auto-select transport: USB if cable is plugged in, BT otherwise */
-    bool use_bt = !detect_usb_cable();
+    /* Auto-select transport: USB if cable is plugged in, BT otherwise.
+     * Desktop mode overrides — it talks directly to Claude Desktop over
+     * BLE and the USB/host-bridge path is never useful, so stay on BLE
+     * regardless of cable state. */
+    bool use_bt = !detect_usb_cable() ||
+                  app_settings_get_ble_mode() == BleModeDesktop;
     app->transport = use_bt ? transport_ble_alloc() : transport_usb_alloc();
     app_on_transport_mode_changed(app, use_bt);
     ui_set_transport_mode(app->ui, use_bt);
