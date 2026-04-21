@@ -19,10 +19,13 @@ Both modes give you the same LED / sound / vibration feedback for working, succe
 
 1. Install and launch Claude Buddy on your Flipper.
 2. Install the companion Claude Code plugin:
-   ```bash
+
+   (bash)
+
    claude plugin marketplace add jxw1102/flipper-claude-buddy
+
    claude plugin install flipper-claude-buddy@flipper-claude-buddy
-   ```
+
 3. Start a Claude Code session. The plugin launches the Python host bridge automatically.
 
 **Connection.** USB is used when the cable is plugged in; otherwise BLE. Switching is automatic.
