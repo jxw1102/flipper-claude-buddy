@@ -38,6 +38,7 @@ typedef enum {
     UiEventCtrlO,        // transcript mode: Ctrl+O
     UiEventCtrlE,        // transcript mode: Ctrl+E
     UiEventShiftTab,     // toggle plan mode (Shift+Tab)
+    UiEventToggleBleMode, // BLE profile toggled between Bridge and Desktop
 } UiEventType;
 
 typedef enum {
@@ -55,8 +56,12 @@ typedef void (*UiEventCallback)(UiEventType event, const char* data, void* conte
 
 // View model structs (stored inside each View's model allocation)
 typedef struct {
-    char text[22];    // primary status line
-    char subtext[22]; // secondary info line (empty = hide)
+    /* Sized to match PROTOCOL_MAX_FIELD_LEN / NUS_MSG_FIELD_LEN (64).
+     * Desktop mode word-wraps this across up to 3 lines via wrap_text()
+     * in ui.c; Bridge mode shows it on a single line and relies on the
+     * host to keep messages short. */
+    char text[64];    // primary status line
+    char subtext[22]; // secondary info line (empty = hide; Bridge only)
     bool connected;         // serial/flipper connected
     bool claude_connected;  // claude code session active
     bool muted;             // sound mute active (shown as indicator in header)
@@ -93,7 +98,8 @@ typedef enum {
 typedef struct {
     InfoPage page;
     int index;      // selected item on menu page
-    int scroll;     // scroll offset on help page
+    int scroll;     // vertical scroll offset (help / transcript)
+    int h_scroll;   // horizontal scroll offset, pixels (transcript only)
     uint8_t anim_frame; // animation counter for about page character
 } InfoModel;
 

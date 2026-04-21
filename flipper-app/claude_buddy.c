@@ -20,20 +20,38 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_hal_power.h>
+#include <furi_hal_rtc.h>
+#include <datetime/datetime.h>
 #include <gui/gui.h>
 #include <notification/notification_messages.h>
 
 #include "transport.h"
 #include "protocol.h"
+#include "nus_protocol.h"
+#include "nus_state.h"
+#include "nus_stats.h"
+#include "nus_transcript.h"
+#include "nus_charpack.h"
 #include "notifications.h"
 #include "ui.h"
+#include "app_settings.h"
+
+/* Pick the BLE transport based on the persisted user setting:
+ *   Bridge  → custom-UUID serial profile, talks to our Python host bridge
+ *   Desktop → Nordic UART Service profile, talks to Claude Desktop/Cowork */
+static Transport* transport_ble_alloc(void) {
+    return (app_settings_get_ble_mode() == BleModeDesktop) ? transport_nus_alloc()
+                                                           : transport_bt_alloc();
+}
 
 #define SERIAL_QUEUE_SIZE 8
 
 enum {
-    CustomEventSerialMsg     = 100,
+    CustomEventSerialMsg      = 100,
     // UI_CUSTOM_EVENT_TRANSITION = 101 is defined in ui.h
-    CustomEventUsbDisconnect = 102,
+    CustomEventUsbDisconnect  = 102,
+    CustomEventNusTick        = 103, // forward-declared below, see nus_tick_cb
+    CustomEventNusReadvertise = 104, // rebuild BLE transport to pick up new adv name
 };
 
 typedef struct {
@@ -49,6 +67,17 @@ typedef struct {
     ProtocolMessage rx_msg_buf;     // Buffer for parsing on transport thread
     ProtocolMessage process_msg_buf; // Buffer for executing on GUI thread
     char tx_buf[256];               // Shared TX building buffer (GUI thread)
+    /* Cached at every transport_start so on_serial_data (transport thread)
+     * can pick the right parser without doing file I/O per line. */
+    BleMode current_ble_mode;
+    /* Last permission prompt id seen in NUS mode; echoed back when the
+     * user makes a decision. Empty in Bridge mode. */
+    char last_perm_id[40];
+    /* Desktop-mode state machine + persisted counters. Only active while
+     * current_ble_mode == BleModeDesktop; otherwise untouched. */
+    NusStateCtx nus_state;
+    NusStats nus_stats;
+    FuriTimer* nus_tick_timer; /* 1 Hz while in Desktop mode; drives sleep detection */
 } App;
 
 // Play a sound unless muted. Interrupt/mute toggle always plays regardless.
@@ -78,6 +107,50 @@ static void usb_poll_cb(void* context) {
     }
 }
 
+/* ── NUS state-machine tick (timer thread) ───────────────────── */
+
+/* The state machine cares about wall-clock elapsed time for the Sleep
+ * timeout; run nus_state_tick on the GUI thread via a custom event so
+ * it can safely touch UI / notifications. */
+
+static void nus_tick_cb(void* context) {
+    App* app = context;
+    if(app && app->ui && app->ui->view_dispatcher) {
+        view_dispatcher_send_custom_event(app->ui->view_dispatcher, CustomEventNusTick);
+    }
+}
+
+/* Spin up the 1 Hz tick timer if we're in Desktop mode and it isn't
+ * already running. Safe to call repeatedly. */
+static void nus_tick_ensure_started(App* app) {
+    if(app->nus_tick_timer) return;
+    app->nus_tick_timer = furi_timer_alloc(nus_tick_cb, FuriTimerTypePeriodic, app);
+    furi_timer_start(app->nus_tick_timer, 1000);
+}
+
+static void nus_tick_stop(App* app) {
+    if(!app->nus_tick_timer) return;
+    furi_timer_stop(app->nus_tick_timer);
+    furi_timer_free(app->nus_tick_timer);
+    app->nus_tick_timer = NULL;
+}
+
+/* Apply the side effects of switching transports: cache the BLE mode (so
+ * on_serial_data can pick the right parser), clear the pending perm-id,
+ * and start/stop the state machine + its tick timer. */
+static void app_on_transport_mode_changed(App* app, bool on_ble) {
+    app->current_ble_mode = on_ble ? app_settings_get_ble_mode() : BleModeBridge;
+    app->last_perm_id[0] = '\0';
+    if(app->current_ble_mode == BleModeDesktop) {
+        nus_state_reset(&app->nus_state);
+        nus_transcript_reset();
+        nus_charpack_reset();
+        nus_tick_ensure_started(app);
+    } else {
+        nus_tick_stop(app);
+    }
+}
+
 /* ── Helpers ──────────────────────────────────────────────────── */
 
 static SoundType sound_from_string(const char* name) {
@@ -102,11 +175,122 @@ static SoundType sound_from_string(const char* name) {
 
 /* ── Serial RX (worker thread) ────────────────────────────────── */
 
+/* Translate a parsed Anthropic message into the existing ProtocolMessage
+ * shape so process_message can stay protocol-agnostic.  Returns true if
+ * the result should be queued; false to drop (e.g. evt:turn). */
+static bool translate_nus_to_protocol(const NusMessage* in, ProtocolMessage* out) {
+    memset(out, 0, sizeof(*out));
+    switch(in->kind) {
+    case NusMsgHeartbeat:
+        /* Carry the counters no matter which branch we emit so the state
+         * machine can see them on both prompt and non-prompt paths. */
+        out->hb_total = in->total;
+        out->hb_running = in->running;
+        out->hb_waiting = in->waiting;
+        if(in->has_prompt) {
+            out->type = MsgTypePerm;
+            strlcpy(out->text, in->prompt_tool[0] ? in->prompt_tool : "Permission",
+                    sizeof(out->text));
+            strlcpy(out->text2, in->prompt_hint, sizeof(out->text2));
+            strlcpy(out->perm_id, in->prompt_id, sizeof(out->perm_id));
+        } else {
+            out->type = MsgTypeAnthropicHB;
+            const char* fallback = (in->running > 0) ? "Working..." :
+                                   (in->total > 0)   ? "Connected"  :
+                                                       "Idle";
+            strlcpy(out->text, in->msg[0] ? in->msg : fallback, sizeof(out->text));
+        }
+        return true;
+
+    case NusMsgCmdStatus:
+    case NusMsgCmdOwner:
+    case NusMsgCmdName:
+    case NusMsgCmdUnpair:
+    case NusMsgCmdCharBegin:
+    case NusMsgCmdFile:
+    case NusMsgCmdChunk:
+    case NusMsgCmdFileEnd:
+    case NusMsgCmdCharEnd: {
+        out->type = MsgTypeUnknown;
+        const char* cmd = "";
+        switch(in->kind) {
+        case NusMsgCmdStatus:     cmd = "status"; break;
+        case NusMsgCmdOwner:      cmd = "owner";  strlcpy(out->nus_name, in->name, sizeof(out->nus_name)); break;
+        case NusMsgCmdName:       cmd = "name";   strlcpy(out->nus_name, in->name, sizeof(out->nus_name)); break;
+        case NusMsgCmdUnpair:     cmd = "unpair"; break;
+        case NusMsgCmdCharBegin:  cmd = "char_begin"; strlcpy(out->nus_name, in->pack_name, sizeof(out->nus_name)); break;
+        case NusMsgCmdFile:       cmd = "file";       strlcpy(out->text, in->file_path, sizeof(out->text)); break;
+        case NusMsgCmdChunk:      cmd = "chunk";
+            /* Copy the base64 body out of the (transient) parse buffer so
+             * the GUI thread can decode+write storage without racing. */
+            if(in->chunk_body && in->chunk_body_len > 0) {
+                int copy = in->chunk_body_len;
+                if(copy >= (int)sizeof(out->menu_data)) copy = sizeof(out->menu_data) - 1;
+                memcpy(out->menu_data, in->chunk_body, copy);
+                out->menu_data[copy] = '\0';
+            }
+            break;
+        case NusMsgCmdFileEnd:    cmd = "file_end"; break;
+        case NusMsgCmdCharEnd:    cmd = "char_end"; break;
+        default: break;
+        }
+        strlcpy(out->pending_ack, cmd, sizeof(out->pending_ack));
+        return true;
+    }
+
+    case NusMsgTime:
+        /* time has no ack per spec — queue a plain carrier message with
+         * just the epoch/tz fields.  process_message sets the RTC on the
+         * GUI thread without attempting an ack. */
+        out->type = MsgTypeUnknown;
+        out->nus_time_epoch = in->time_epoch;
+        out->nus_time_tz = in->time_tz_offset;
+        return true;
+
+    case NusMsgTurn:
+    case NusMsgUnknown:
+    default:
+        return false;
+    }
+}
+
+/* Callback invoked per text block in a turn event; appends to the
+ * transcript ring buffer with an "A: " marker so it's distinguishable
+ * from heartbeat entries. */
+static void on_turn_text(const char* text, int text_len, void* ctx) {
+    (void)ctx;
+    char line[NUS_TRANSCRIPT_LINE_MAX];
+    int prefix = snprintf(line, sizeof(line), "A: ");
+    int copy = text_len;
+    int space = (int)sizeof(line) - prefix - 1;
+    if(copy > space) copy = space;
+    if(copy > 0) memcpy(line + prefix, text, copy);
+    line[prefix + (copy > 0 ? copy : 0)] = '\0';
+    nus_transcript_append(line);
+}
+
 static void on_serial_data(const char* line, void* context) {
     App* app = context;
     if(!app || !line) return;
-    if(!protocol_parse(line, &app->rx_msg_buf)) return;
-    
+
+    if(app->current_ble_mode == BleModeDesktop) {
+        NusMessage nus;
+        if(!nus_protocol_parse(line, &nus)) return;
+        /* Transcript is the only side effect that MUST happen inline —
+         * the entries_body / turn_content_body pointers live inside the
+         * parse-time JSON buffer and go stale after return.  The ring
+         * buffer itself is thread-safe via its internal mutex. */
+        if(nus.kind == NusMsgHeartbeat && nus.entries_body && nus.entries_body_len > 0) {
+            nus_transcript_replace_from_entries(nus.entries_body, nus.entries_body_len);
+        } else if(nus.kind == NusMsgTurn && nus.turn_content_body) {
+            nus_protocol_foreach_turn_text(
+                nus.turn_content_body, nus.turn_content_body_len, on_turn_text, NULL);
+        }
+        if(!translate_nus_to_protocol(&nus, &app->rx_msg_buf)) return;
+    } else {
+        if(!protocol_parse(line, &app->rx_msg_buf)) return;
+    }
+
     /* Non-blocking put; queue copies structure by value. */
     if(furi_message_queue_put(app->serial_queue, &app->rx_msg_buf, 0) == FuriStatusOk) {
         view_dispatcher_send_custom_event(app->ui->view_dispatcher, CustomEventSerialMsg);
@@ -210,8 +394,22 @@ static void process_message(App* app, ProtocolMessage* msg) {
         break;
 
     case MsgTypePerm:
-        // Permission always plays its alert sound (backlight + vibro) even when muted
-        notify_play(app->notifications, SoundPerm, LedStateOff);
+        /* In Desktop mode, route the prompt through the state machine so
+         * Attention entry emits the right LED/sound. The UI show below
+         * follows. SoundPerm is suppressed here because the state machine
+         * will play it on Attention entry (otherwise double beep). */
+        if(app->current_ble_mode == BleModeDesktop) {
+            nus_state_on_heartbeat(
+                &app->nus_state, &app->nus_stats,
+                msg->hb_total, msg->hb_running, msg->hb_waiting,
+                /* has_prompt */ true, msg->text, 0);
+        } else {
+            notify_play(app->notifications, SoundPerm, LedStateOff);
+        }
+        /* Remember the prompt id for echo-back on the decision. */
+        if(msg->perm_id[0]) {
+            strlcpy(app->last_perm_id, msg->perm_id, sizeof(app->last_perm_id));
+        }
         ui_show_permission(app->ui, msg->text, msg->text2);
         break;
 
@@ -219,8 +417,90 @@ static void process_message(App* app, ProtocolMessage* msg) {
         ui_set_claude_connected(app->ui, msg->claude_connected);
         break;
 
+    case MsgTypeAnthropicHB: {
+        /* State machine handles all transitions (LED/audio/pose).  We only
+         * do the status-text update here. Tokens come in via a separate
+         * path because the heartbeat parser stores them on the message;
+         * pass 0 for now — level-up still fires once tokens are threaded
+         * through. */
+        nus_state_on_heartbeat(
+            &app->nus_state,
+            &app->nus_stats,
+            msg->hb_total,
+            msg->hb_running,
+            msg->hb_waiting,
+            /* has_prompt: false at this point — prompt heartbeats go
+             * through MsgTypePerm instead. */
+            false,
+            msg->text,
+            /* tokens: not yet threaded through ProtocolMessage; safe to
+             * pass 0 (level-up waits until we see a real count). */
+            0);
+        ui_show_status2(
+            app->ui,
+            msg->text[0] ? msg->text : "Idle",
+            NULL,
+            msg->hb_total > 0);
+        break;
+    }
+
     default:
         break;
+    }
+
+    /* Anthropic protocol: cmds require an ack + some carry deferred
+     * side effects (storage writes, RTC, etc.) that we moved off the
+     * BLE event-callback thread for safety. */
+    if(msg->nus_time_epoch > 0) {
+        /* {"time":[epoch,tz]} — set local wall time in Flipper RTC. */
+        DateTime dt;
+        datetime_timestamp_to_datetime(
+            (uint32_t)(msg->nus_time_epoch + msg->nus_time_tz), &dt);
+        furi_hal_rtc_set_datetime(&dt);
+    }
+    if(msg->pending_ack[0]) {
+        uint32_t n = msg->ack_n;
+        /* Perform the cmd's deferred side effect, then build the ack. */
+        if(strcmp(msg->pending_ack, "owner") == 0) {
+            app_settings_set_owner_name(msg->nus_name);
+        } else if(strcmp(msg->pending_ack, "name") == 0) {
+            app_settings_set_device_name(msg->nus_name);
+            view_dispatcher_send_custom_event(
+                app->ui->view_dispatcher, CustomEventNusReadvertise);
+        } else if(strcmp(msg->pending_ack, "unpair") == 0) {
+            transport_nus_forget_bonds();
+        } else if(strcmp(msg->pending_ack, "char_begin") == 0) {
+            if(!nus_charpack_begin(msg->nus_name)) {
+                /* Spec: don't ack char_begin on failure — desktop will
+                 * time out and surface an error to the user. */
+                return;
+            }
+        } else if(strcmp(msg->pending_ack, "file") == 0) {
+            nus_charpack_file_open(msg->text);
+        } else if(strcmp(msg->pending_ack, "chunk") == 0) {
+            int32_t written = -1;
+            int body_len = (int)strlen(msg->menu_data);
+            if(body_len > 0) {
+                written = nus_charpack_chunk_write(msg->menu_data, body_len);
+            }
+            if(written >= 0) n = (uint32_t)written;
+        } else if(strcmp(msg->pending_ack, "file_end") == 0) {
+            int32_t size = nus_charpack_file_close();
+            if(size >= 0) n = (uint32_t)size;
+        } else if(strcmp(msg->pending_ack, "char_end") == 0) {
+            nus_charpack_end();
+        }
+
+        int len = 0;
+        if(strcmp(msg->pending_ack, "status") == 0) {
+            len = nus_build_status_ack(
+                app->tx_buf, sizeof(app->tx_buf), "Claude",
+                transport_nus_is_secure(),
+                &app->nus_stats);
+        } else {
+            len = nus_build_ack(app->tx_buf, sizeof(app->tx_buf), msg->pending_ack, n);
+        }
+        if(len > 0) transport_send(app->transport, app->tx_buf, len);
     }
 }
 
@@ -233,6 +513,26 @@ static bool on_custom_event(void* context, uint32_t event) {
         while(furi_message_queue_get(app->serial_queue, &app->process_msg_buf, 0) == FuriStatusOk) {
             process_message(app, &app->process_msg_buf);
         }
+        return true;
+    }
+    if(event == CustomEventNusTick) {
+        nus_state_tick(&app->nus_state);
+        return true;
+    }
+    if(event == CustomEventNusReadvertise) {
+        /* User asked (via cmd:name) for a new advertised name. Only a
+         * BLE profile restart picks the new GAP config up; skip when
+         * we're on USB — next USB-disconnect handover will pick it up. */
+        if(detect_usb_cable()) return true;
+        if(app->transport) {
+            transport_stop(app->transport);
+            transport_free(app->transport);
+            app->transport = NULL;
+        }
+        app->transport = transport_ble_alloc();
+        app->hello_sent = false;
+        app_on_transport_mode_changed(app, true);
+        transport_start(app->transport, on_serial_data, app);
         return true;
     }
     if(event == CustomEventUsbDisconnect) {
@@ -249,8 +549,9 @@ static bool on_custom_event(void* context, uint32_t event) {
         }
 
         // Switch to BLE
-        app->transport = transport_bt_alloc();
+        app->transport = transport_ble_alloc();
         app->hello_sent = false;
+        app_on_transport_mode_changed(app, true);
         ui_set_transport_mode(app->ui, true);
         transport_start(app->transport, on_serial_data, app);
 
@@ -269,7 +570,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
 
     switch(event) {
     case UiEventBackspace:
-        app_notify(app, SoundEnter);
+        app_notify(app, SoundLedFlash);
         len = protocol_build_backspace(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
@@ -287,6 +588,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventDown:
+        app_notify(app, SoundLedFlash);
         len = protocol_build_down(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
@@ -361,36 +663,31 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventPermAllow:
-        notify_play(app->notifications, SoundLedOff, LedStateOff);
-        app_notify(app, SoundSuccess);
-        len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), true, false, false);
-        transport_send(app->transport, app->tx_buf, len);
-        ui_back_to_status(app->ui);
-        break;
-
     case UiEventPermAlways:
-        notify_play(app->notifications, SoundLedOff, LedStateOff);
-        app_notify(app, SoundSuccess);
-        len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), true, true, false);
-        transport_send(app->transport, app->tx_buf, len);
-        ui_back_to_status(app->ui);
-        break;
-
     case UiEventPermDeny:
+    case UiEventPermEsc: {
+        bool allow = (event == UiEventPermAllow || event == UiEventPermAlways);
+        bool always = (event == UiEventPermAlways);
+        bool esc = (event == UiEventPermEsc);
         notify_play(app->notifications, SoundLedOff, LedStateOff);
-        app_notify(app, SoundEsc);
-        len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), false, false, false);
-        transport_send(app->transport, app->tx_buf, len);
-        ui_back_to_status(app->ui);
-        break;
+        app_notify(app, allow ? SoundSuccess : SoundEsc);
 
-    case UiEventPermEsc:
-        notify_play(app->notifications, SoundLedOff, LedStateOff);
-        app_notify(app, SoundEsc);
-        len = protocol_build_perm_resp(app->tx_buf, sizeof(app->tx_buf), false, false, true);
+        if(app->current_ble_mode == BleModeDesktop && app->last_perm_id[0]) {
+            /* Anthropic protocol only has once/deny — collapse Always/Allow
+             * to "once".  Esc has no spec-defined response; reuse "deny". */
+            len = nus_build_perm_decision(
+                app->tx_buf, sizeof(app->tx_buf), app->last_perm_id, allow);
+            app->last_perm_id[0] = '\0';
+            /* Tally stats (persisted) + fire Heart if decision was fast. */
+            nus_state_on_permission_decision(&app->nus_state, &app->nus_stats, allow);
+        } else {
+            len = protocol_build_perm_resp(
+                app->tx_buf, sizeof(app->tx_buf), allow, always, esc);
+        }
         transport_send(app->transport, app->tx_buf, len);
         ui_back_to_status(app->ui);
         break;
+    }
 
     case UiEventYes:
         app_notify(app, SoundCmd);
@@ -399,21 +696,25 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         break;
 
     case UiEventPageUp:
+        app_notify(app, SoundLedFlash);
         len = protocol_build_pgup(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
 
     case UiEventPageDown:
+        app_notify(app, SoundLedFlash);
         len = protocol_build_pgdown(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
 
     case UiEventCtrlO:
+        app_notify(app, SoundLedFlash);
         len = protocol_build_ctrl_o(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
 
     case UiEventCtrlE:
+        app_notify(app, SoundLedFlash);
         len = protocol_build_ctrl_e(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
@@ -423,6 +724,45 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         len = protocol_build_shift_tab(app->tx_buf, sizeof(app->tx_buf));
         transport_send(app->transport, app->tx_buf, len);
         break;
+
+    case UiEventToggleBleMode: {
+        /* UI already persisted the new setting. Desktop mode always runs
+         * on BLE (USB is irrelevant there); Bridge mode picks transport
+         * based on the cable. Rebuild the transport live so the user
+         * doesn't have to restart the app. */
+        app_notify(app, SoundCmd);
+        BleMode new_mode = app_settings_get_ble_mode();
+        bool want_bt = (new_mode == BleModeDesktop) || !detect_usb_cable();
+
+        if(app->transport) {
+            transport_stop(app->transport);
+            transport_free(app->transport);
+            app->transport = NULL;
+        }
+        if(app->usb_poll_timer) {
+            furi_timer_stop(app->usb_poll_timer);
+            furi_timer_free(app->usb_poll_timer);
+            app->usb_poll_timer = NULL;
+        }
+
+        app->transport = want_bt ? transport_ble_alloc() : transport_usb_alloc();
+        app->hello_sent = false;
+        app_on_transport_mode_changed(app, want_bt);
+        ui_set_transport_mode(app->ui, want_bt);
+        /* Clear any stale status text from the previous mode (e.g. a
+         * Bridge "Turn complete" lingering into Desktop, or a Desktop
+         * heartbeat msg lingering into Bridge) before the new transport
+         * has a chance to repaint. */
+        ui_show_status(app->ui, NULL, false);
+        transport_start(app->transport, on_serial_data, app);
+
+        if(!want_bt) {
+            /* Poll for USB removal so we auto-swap back to BLE. */
+            app->usb_poll_timer = furi_timer_alloc(usb_poll_cb, FuriTimerTypePeriodic, app);
+            furi_timer_start(app->usb_poll_timer, 5000);
+        }
+        break;
+    }
 
     case UiEventExitApp:
         ui_stop(app->ui);
@@ -456,9 +796,22 @@ int32_t claude_buddy_app(void* p) {
 
     ui_show_status(app->ui, NULL, false);
 
-    /* Auto-select transport: USB if cable is plugged in, BT otherwise */
-    bool use_bt = !detect_usb_cable();
-    app->transport = use_bt ? transport_bt_alloc() : transport_usb_alloc();
+    /* Init the Desktop-mode state machine + load persisted stats. The
+     * state machine only runs while current_ble_mode == Desktop; init
+     * here is cheap. */
+    nus_state_init(&app->nus_state, app->notifications, app->ui, &app->is_working);
+    nus_stats_load(&app->nus_stats);
+    nus_transcript_init();
+    nus_charpack_init();
+
+    /* Auto-select transport: USB if cable is plugged in, BT otherwise.
+     * Desktop mode overrides — it talks directly to Claude Desktop over
+     * BLE and the USB/host-bridge path is never useful, so stay on BLE
+     * regardless of cable state. */
+    bool use_bt = !detect_usb_cable() ||
+                  app_settings_get_ble_mode() == BleModeDesktop;
+    app->transport = use_bt ? transport_ble_alloc() : transport_usb_alloc();
+    app_on_transport_mode_changed(app, use_bt);
     ui_set_transport_mode(app->ui, use_bt);
 
     /* In USB mode, poll every 5 s for cable removal and auto-switch to BLE */
@@ -487,10 +840,13 @@ int32_t claude_buddy_app(void* p) {
         furi_timer_stop(app->usb_poll_timer);
         furi_timer_free(app->usb_poll_timer);
     }
+    nus_tick_stop(app);
 
     transport_stop(app->transport);
     transport_free(app->transport);
     furi_message_queue_free(app->serial_queue);
+    nus_charpack_free();
+    nus_transcript_free();
     ui_free(app->ui);
 
     furi_record_close(RECORD_GUI);

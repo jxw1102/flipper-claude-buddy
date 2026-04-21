@@ -12,6 +12,21 @@ Every significant event triggers a distinct sound and vibration pattern on your 
 **You control Claude with physical buttons.**
 Interrupt a runaway task, submit a prompt, trigger voice dictation, or open the slash command menu — all without touching the keyboard.
 
+## Two modes
+
+Claude Buddy runs in one of two modes, switchable from the on-device menu (long-press **Right → MENU**, then the top row):
+
+- **Claude Code (USB/BLE)** (default) — talks to Claude Code in the terminal via the companion plugin and Python host bridge. USB or BLE. Full keystroke forwarding: Enter, Esc, voice dictation, slash-command menu, etc.
+- **Claude Desktop (BLE)** — talks directly to the Claude Desktop app over BLE using Anthropic's [Hardware Buddy](https://github.com/anthropics/claude-desktop-buddy) protocol (Nordic UART Service). No plugin, no host bridge. The Flipper shows live status from Claude Desktop (running sessions, token counts, recent transcript) and lets you Allow / Deny permission prompts right from the device.
+
+### Enabling Hardware Buddy mode in Claude Desktop
+
+1. On the Flipper, switch to **Claude Desktop (BLE)** in the info menu.
+2. In the Claude Desktop app: **Help → Troubleshooting → Enable Developer Mode**.
+3. Open **Developer → Open Hardware Buddy** and pick your Flipper from the scan list. macOS will prompt for Bluetooth permission the first time.
+
+Once paired, Claude Desktop auto-reconnects whenever both sides are online.
+
 ## Buttons
 
 | Button | Action |

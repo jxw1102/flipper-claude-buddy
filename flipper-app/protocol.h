@@ -25,6 +25,10 @@ typedef enum {
     MsgTypeHello,
     MsgTypePong,
     MsgTypeYes,
+    /* Synthesised from an Anthropic heartbeat snapshot. Distinct from
+     * MsgTypeStatus so the GUI thread can drive sound + pose transitions
+     * based on total/running/waiting counter deltas. */
+    MsgTypeAnthropicHB,
 } MsgType;
 
 typedef struct {
@@ -37,6 +41,27 @@ typedef struct {
     bool claude_connected; // claude code session state
     bool has_rssi;
     int16_t rssi;
+    /* Anthropic NUS protocol additions (zero/empty when not applicable):
+     *   perm_id     — id of the pending permission prompt, echoed back on
+     *                 the user's decision
+     *   pending_ack — cmd name (e.g. "status", "owner") that the GUI thread
+     *                 must ack via transport_send.  Set by on_serial_data
+     *                 in NUS mode; consumed in process_message. */
+    char perm_id[40];
+    char pending_ack[16];
+    /* `n` field to use when the ack needs a running byte count (chunk,
+     * file_end). 0 for normal acks. */
+    uint32_t ack_n;
+    /* Counters from the latest Anthropic heartbeat (for MsgTypeAnthropicHB). */
+    int hb_total;
+    int hb_running;
+    int hb_waiting;
+    /* Per-kind payloads deferred to the GUI thread.  Keeping storage /
+     * hardware side-effects off the BLE event callback thread avoids
+     * deadlocks and long-blocking operations on that critical path. */
+    char nus_name[32];          /* cmd:owner, cmd:name */
+    int64_t nus_time_epoch;     /* cmd:time */
+    int32_t nus_time_tz;
 } ProtocolMessage;
 
 // Parse a JSON line into a ProtocolMessage. Returns true on success.

@@ -32,6 +32,7 @@ typedef enum {
     SoundMuteOff,        // Ascending two-note blip (coming back)
     SoundLedCompact,     // Cyan blink (persistent — context compaction in progress)
     SoundCompactDone,    // Blink stop + short C5 ding + cyan flash (compaction finished)
+    SoundLedFlash,       // Brief cyan LED flash only (no sound, no vibro)
 } SoundType;
 
 // Play sound sequence, then restore LED to `restore` state.

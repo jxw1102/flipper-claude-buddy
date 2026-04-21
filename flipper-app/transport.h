@@ -43,3 +43,11 @@ static inline void transport_free(Transport* t) {
 
 Transport* transport_usb_alloc(void);
 Transport* transport_bt_alloc(void);
+Transport* transport_nus_alloc(void);
+
+/* NUS-transport-only helpers.  Callers outside the NUS path must check
+ * that the transport is the NUS flavour before calling (or tolerate a
+ * no-op / false response). */
+bool transport_nus_is_secure(void);
+/* Erase all bonded central keys.  Called on `cmd:unpair`. */
+void transport_nus_forget_bonds(void);

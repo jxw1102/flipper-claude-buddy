@@ -342,6 +342,17 @@ static const NotificationSequence seq_led_compact = {
     NULL,
 };
 
+// LED flash: brief cyan flash (no sound, no vibro)
+static const NotificationSequence seq_led_flash = {
+    &message_red_0,
+    &message_green_255,
+    &message_blue_255,
+    &message_delay_50,
+    &message_green_0,
+    &message_blue_0,
+    NULL,
+};
+
 // Compact done: stop blink + short C5 ding + cyan flash then off
 static const NotificationSequence seq_compact_done = {
     &message_blink_stop,
@@ -380,6 +391,7 @@ static const NotificationSequence* const sound_table[] = {
     [SoundMuteOff]        = &seq_mute_off,
     [SoundLedCompact]     = &seq_led_compact,
     [SoundCompactDone]    = &seq_compact_done,
+    [SoundLedFlash]       = &seq_led_flash,
 };
 
 void notify_play(NotificationApp* app, SoundType sound, LedState restore) {
