@@ -56,6 +56,8 @@ typedef struct {
     int total;
     int running;
     int waiting;
+    uint32_t tokens;        /* cumulative since desktop start */
+    uint32_t tokens_today;  /* resets at local midnight */
     char msg[NUS_MSG_FIELD_LEN];
 
     /* Permission prompt embedded in heartbeat. */

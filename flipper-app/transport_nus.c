@@ -116,8 +116,12 @@ static void nus_start(Transport* t, TransportRxCallback cb, void* ctx) {
     }
 
     nus_profile_set_rx_callback(nt->profile, nus_rx_cb, nt);
-    furi_hal_bt_start_advertising();
+    /* Register the connection-status callback BEFORE advertising so the
+     * Connected event can't race past us. Without this, a fast-connecting
+     * central leaves nt->connected=false while RX still flows — which
+     * silently drops every TX (nus_send gates on nt->connected). */
     bt_set_status_changed_callback(nt->bt, nus_status_changed_cb, nt);
+    furi_hal_bt_start_advertising();
 
     FURI_LOG_I(TAG, "NUS transport started");
 }
@@ -144,11 +148,39 @@ static void nus_stop(Transport* t) {
 }
 
 static void nus_send(Transport* t, const char* data, int len) {
-    if(!t || !data) return;
+    if(!t || !data || len <= 0) return;
     NusTransport* nt = (NusTransport*)t;
-    if(!nt->profile || !nt->connected) return;
+    FURI_LOG_D(TAG, "nus_send: len=%d connected=%d profile=%p",
+               len, nt->connected, (void*)nt->profile);
+    if(!nt->profile) {
+        FURI_LOG_E(TAG, "nus_send: no profile, dropping %d bytes", len);
+        return;
+    }
+    /* Don't gate on nt->connected: the BT status callback can miss the
+     * Connected event (e.g. if the central attaches faster than we can
+     * register), leaving the flag false even though the link is live and
+     * RX is flowing. If the link is actually down, nus_profile_tx just
+     * returns false and we log it — no harm. */
 
-    nus_profile_tx(nt->profile, (const uint8_t*)data, (uint16_t)len);
+    /* Mirror the Anthropic reference firmware (claude-desktop-buddy
+     * src/main.cpp sendCmd): the JSON body and the trailing '\n' go out
+     * as two separate BLE notifications. The desktop's line reassembler
+     * is sensitive to how the terminator arrives — packing body+'\n' in
+     * a single notify caused replies to be silently ignored in the
+     * field. */
+    uint16_t body_len = (uint16_t)len;
+    bool has_newline = (data[len - 1] == '\n');
+    if(has_newline) body_len = (uint16_t)(len - 1);
+
+    if(body_len > 0) {
+        bool ok = nus_profile_tx(nt->profile, (const uint8_t*)data, body_len);
+        FURI_LOG_D(TAG, "nus_send: body tx %d bytes ok=%d", body_len, ok);
+    }
+    if(has_newline) {
+        static const uint8_t nl = '\n';
+        bool ok = nus_profile_tx(nt->profile, &nl, 1);
+        FURI_LOG_D(TAG, "nus_send: nl tx ok=%d", ok);
+    }
 }
 
 static void nus_free(Transport* t) {

@@ -36,6 +36,8 @@
 #include "ui.h"
 #include "app_settings.h"
 
+#define TAG "ClaudeBuddy"
+
 /* Pick the BLE transport based on the persisted user setting:
  *   Bridge  → custom-UUID serial profile, talks to our Python host bridge
  *   Desktop → Nordic UART Service profile, talks to Claude Desktop/Cowork */
@@ -187,6 +189,8 @@ static bool translate_nus_to_protocol(const NusMessage* in, ProtocolMessage* out
         out->hb_total = in->total;
         out->hb_running = in->running;
         out->hb_waiting = in->waiting;
+        out->hb_tokens = in->tokens;
+        out->hb_tokens_today = in->tokens_today;
         if(in->has_prompt) {
             out->type = MsgTypePerm;
             strlcpy(out->text, in->prompt_tool[0] ? in->prompt_tool : "Permission",
@@ -274,8 +278,20 @@ static void on_serial_data(const char* line, void* context) {
     if(!app || !line) return;
 
     if(app->current_ble_mode == BleModeDesktop) {
+        /* Log raw line for desktop-mode protocol debugging. Enable with
+         * `log debug` on the Flipper CLI. Heartbeats arrive every 10 s
+         * (plus change-driven) so this is not too noisy. */
+        FURI_LOG_D(TAG, "rx: %s", line);
         NusMessage nus;
-        if(!nus_protocol_parse(line, &nus)) return;
+        if(!nus_protocol_parse(line, &nus)) {
+            FURI_LOG_D(TAG, "rx: parse failed");
+            return;
+        }
+        FURI_LOG_D(
+            TAG,
+            "rx: kind=%d total=%d running=%d waiting=%d prompt=%d msg='%s'",
+            nus.kind, nus.total, nus.running, nus.waiting,
+            nus.has_prompt ? 1 : 0, nus.msg);
         /* Transcript is the only side effect that MUST happen inline —
          * the entries_body / turn_content_body pointers live inside the
          * parse-time JSON buffer and go stale after return.  The ring
@@ -393,25 +409,26 @@ static void process_message(App* app, ProtocolMessage* msg) {
         }
         break;
 
-    case MsgTypePerm:
-        /* In Desktop mode, route the prompt through the state machine so
-         * Attention entry emits the right LED/sound. The UI show below
-         * follows. SoundPerm is suppressed here because the state machine
-         * will play it on Attention entry (otherwise double beep). */
-        if(app->current_ble_mode == BleModeDesktop) {
+    case MsgTypePerm: {
+        bool desktop = app->current_ble_mode == BleModeDesktop;
+        /* State-machine entry is idempotent — safe on every heartbeat. */
+        if(desktop) {
             nus_state_on_heartbeat(
                 &app->nus_state, &app->nus_stats,
                 msg->hb_total, msg->hb_running, msg->hb_waiting,
                 /* has_prompt */ true, msg->text, 0);
+            /* Remember the prompt id for echo-back on the decision. */
+            if(msg->perm_id[0]) {
+                strlcpy(app->last_perm_id, msg->perm_id, sizeof(app->last_perm_id));
+            }
         } else {
             notify_play(app->notifications, SoundPerm, LedStateOff);
         }
-        /* Remember the prompt id for echo-back on the decision. */
-        if(msg->perm_id[0]) {
-            strlcpy(app->last_perm_id, msg->perm_id, sizeof(app->last_perm_id));
-        }
-        ui_show_permission(app->ui, msg->text, msg->text2);
+        /* Desktop wire protocol has no "always" decision — hide the
+         * toggle there. Bridge keeps it. */
+        ui_show_permission(app->ui, msg->text, msg->text2, /*allow_always*/ !desktop);
         break;
+    }
 
     case MsgTypeState:
         ui_set_claude_connected(app->ui, msg->claude_connected);
@@ -436,11 +453,46 @@ static void process_message(App* app, ProtocolMessage* msg) {
             /* tokens: not yet threaded through ProtocolMessage; safe to
              * pass 0 (level-up waits until we see a real count). */
             0);
-        ui_show_status2(
-            app->ui,
-            msg->text[0] ? msg->text : "Idle",
-            NULL,
-            msg->hb_total > 0);
+        /* Desktop keeps embedding the prompt in heartbeats until answered.
+         * A heartbeat without a prompt means the decision landed (ours or
+         * another surface's) — forget the id so the next prompt is treated
+         * as new, and drop the perm view if it's still up. */
+        if(app->last_perm_id[0]) {
+            app->last_perm_id[0] = '\0';
+            if(app->ui->current_view == ViewIdPerm) {
+                ui_back_to_status(app->ui);
+            }
+        }
+        /* When the desktop has nothing to summarize (empty msg or the
+         * literal "(no messages)"), show the heartbeat counters instead
+         * so the screen isn't stuck on a useless placeholder.
+         * Three lines separated by '\n' — wrap_text honors explicit
+         * breaks, so the desktop status view renders them one per line:
+         *   line 1: running count (or waiting / idle)
+         *   line 2: cumulative tokens since Claude Desktop started
+         *   line 3: today's tokens (resets at local midnight) */
+        char status_line[96];
+        const char* text = msg->text;
+        if(!text[0] || strcmp(text, "(no messages)") == 0) {
+            unsigned long session_k = msg->hb_tokens / 1000u;
+            unsigned long today_k = msg->hb_tokens_today / 1000u;
+            const char* first;
+            char first_buf[24];
+            if(msg->hb_running > 0) {
+                snprintf(first_buf, sizeof(first_buf), "%d running", msg->hb_running);
+                first = first_buf;
+            } else if(msg->hb_waiting > 0) {
+                snprintf(first_buf, sizeof(first_buf), "%d waiting", msg->hb_waiting);
+                first = first_buf;
+            } else {
+                first = "Idle";
+            }
+            snprintf(status_line, sizeof(status_line),
+                     "%s\nTokens: %luk\nToday: %luk",
+                     first, session_k, today_k);
+            text = status_line;
+        }
+        ui_show_status2(app->ui, text, NULL, msg->hb_total > 0);
         break;
     }
 
@@ -677,7 +729,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
              * to "once".  Esc has no spec-defined response; reuse "deny". */
             len = nus_build_perm_decision(
                 app->tx_buf, sizeof(app->tx_buf), app->last_perm_id, allow);
-            app->last_perm_id[0] = '\0';
+            FURI_LOG_D(TAG, "tx perm (len=%d): %.*s", len, len, app->tx_buf);
             /* Tally stats (persisted) + fire Heart if decision was fast. */
             nus_state_on_permission_decision(&app->nus_state, &app->nus_stats, allow);
         } else {

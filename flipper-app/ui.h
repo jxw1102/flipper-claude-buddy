@@ -83,9 +83,13 @@ typedef struct {
 
 typedef struct {
     char tool[22];
-    char detail[22];
+    /* Desktop NUS hints can be up to NUS_MSG_FIELD_LEN (64). Bridge uses
+     * far shorter strings; both fit. Word-wrapped in the draw callback. */
+    char detail[64];
     uint8_t anim_frame;
-    uint8_t mode; // 0 = once, 1 = always (persists across requests)
+    uint8_t mode;         // 0 = once, 1 = always (persists across requests)
+    bool allow_always;    // show the Once/Always toggle (Bridge only — the
+                          // desktop wire protocol has no "always" decision)
 } PermModel;
 
 typedef enum {
@@ -127,7 +131,7 @@ void ui_set_claude_connected(UiState* ui, bool connected);
 void ui_set_pose(UiState* ui, uint8_t pose);
 void ui_set_transport_mode(UiState* ui, bool is_bt);
 void ui_update_menu(UiState* ui, const char* pipe_delimited);
-void ui_show_permission(UiState* ui, const char* tool, const char* detail);
+void ui_show_permission(UiState* ui, const char* tool, const char* detail, bool allow_always);
 void ui_show_info(UiState* ui);
 void ui_back_to_status(UiState* ui);
 void ui_set_muted(UiState* ui, bool muted);

@@ -56,6 +56,8 @@ typedef struct {
     int hb_total;
     int hb_running;
     int hb_waiting;
+    uint32_t hb_tokens;        /* cumulative since desktop start */
+    uint32_t hb_tokens_today;  /* resets at local midnight */
     /* Per-kind payloads deferred to the GUI thread.  Keeping storage /
      * hardware side-effects off the BLE event callback thread avoids
      * deadlocks and long-blocking operations on that critical path. */

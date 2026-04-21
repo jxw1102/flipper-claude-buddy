@@ -13,8 +13,6 @@ Pick whichever one matches how you use Claude.  Switch on-device at any time: lo
 
 Both modes give you the same LED / sound / vibration feedback for working, success, error, and permission states.
 
----
-
 ## Mode 1 — Claude Code (USB/BLE)
 
 **Setup**
@@ -45,8 +43,6 @@ Both modes give you the same LED / sound / vibration feedback for working, succe
 | DOWN (hold) | Toggle mute |
 | BACK | Send Backspace (⌫) |
 | BACK (hold) | Exit app |
-
----
 
 ## Mode 2 — Claude Desktop (BLE)
 

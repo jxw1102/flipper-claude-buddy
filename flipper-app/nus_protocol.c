@@ -127,6 +127,9 @@ bool nus_protocol_parse(const char* json_line, NusMessage* msg) {
         msg->kind = NusMsgHeartbeat;
         json_get_int(json_line, "running", &msg->running);
         json_get_int(json_line, "waiting", &msg->waiting);
+        int tmp = 0;
+        if(json_get_int(json_line, "tokens", &tmp) && tmp > 0) msg->tokens = (uint32_t)tmp;
+        if(json_get_int(json_line, "tokens_today", &tmp) && tmp > 0) msg->tokens_today = (uint32_t)tmp;
         json_get_string(json_line, "msg", msg->msg, sizeof(msg->msg));
         /* Entries body pointer is valid only during this call — caller
          * must consume before the JSON line is freed. */

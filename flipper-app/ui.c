@@ -410,8 +410,10 @@ static int wrap_text(
         const char* start = p;
         int last_space = -1;      // index (relative to start) of last fit-so-far space
         int fit = 0;              // chars that fit on this line
+        int newline_at = -1;      // index of forced break, if any
         int i = 0;
         while(start[i]) {
+            if(start[i] == '\n') { newline_at = i; break; }
             int len = i + 1;
             if(len >= (int)sizeof(buf)) break;
             memcpy(buf, start, len);
@@ -422,7 +424,11 @@ static int wrap_text(
             i++;
         }
         int cut;
-        if(!start[fit]) {
+        bool skip_newline = false;
+        if(newline_at >= 0) {
+            cut = newline_at;
+            skip_newline = true;
+        } else if(!start[fit]) {
             cut = fit; // end of string fits
         } else if(last_space > 0 && nlines + 1 < max_lines) {
             cut = last_space; // break at space (keeps future lines available)
@@ -434,6 +440,7 @@ static int wrap_text(
         lines[nlines][cut] = '\0';
         nlines++;
         p = start + cut;
+        if(skip_newline && *p == '\n') p++;
         while(*p == ' ') p++;
     }
     return nlines;
@@ -1282,32 +1289,50 @@ static void perm_draw(Canvas* canvas, void* model) {
     draw_header(canvas, "PERMISSION", true);
 
     // Content area: HDR_H(9) to FTR_Y(53), midpoint = 31
-    // Three lines centered vertically: tool, detail, mode toggle
     int cy = (HDR_H + FTR_Y) / 2; // 31
     // Claude character (PoseWorried) on the left
     draw_claude(canvas, 4, cy - 9, PoseWorried, m->anim_frame);
 
-    // Tool name — right half, centered at x=90
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, 77, cy - 10, AlignCenter, AlignCenter, m->tool);
+    // Right column — tool on top, hint wrapped below. Character occupies
+    // roughly x=4..22, so the text column starts at x≈24 with ~104 px wide.
+    const int text_x = 24;
+    const int text_w = 128 - text_x;
 
-    // Detail — right half
+    // Tool (one line, truncate if needed — tool names are short).
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, text_x + text_w / 2, HDR_H + 7,
+                            AlignCenter, AlignCenter, m->tool);
+
+    // Hint — word-wrap under the tool.
     if(m->detail[0] != '\0') {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, 77, cy, AlignCenter, AlignCenter, m->detail);
+        // Bridge mode reserves a row at the bottom for the Once/Always
+        // toggle; Desktop uses that space for another wrapped line.
+        int max_lines = m->allow_always ? 2 : 3;
+        char lines[3][32];
+        int nlines = wrap_text(canvas, m->detail, text_w, lines, max_lines);
+        const int line_h = 8;
+        int y = HDR_H + 17;  // first hint line baseline
+        for(int i = 0; i < nlines; i++) {
+            canvas_draw_str_aligned(
+                canvas, text_x + text_w / 2, y + i * line_h,
+                AlignCenter, AlignCenter, lines[i]);
+        }
     }
 
-    // Mode toggle indicator (in content area)
-    canvas_set_font(canvas, FontSecondary);
-    const char* mode_label = m->mode ? "Always" : "Once";
-    int mw = (int)canvas_string_width(canvas, mode_label);
-    int mx = 77 - (mw + 9) / 2; // center the triangle + label
-    int my = cy + 10;
-    // Small ▼ triangle
-    canvas_draw_line(canvas, mx, my, mx + 4, my);
-    canvas_draw_line(canvas, mx + 1, my + 1, mx + 3, my + 1);
-    canvas_draw_dot(canvas, mx + 2, my + 2);
-    canvas_draw_str(canvas, mx + 7, my + 4, mode_label);
+    // Mode toggle indicator — Bridge only.
+    if(m->allow_always) {
+        canvas_set_font(canvas, FontSecondary);
+        const char* mode_label = m->mode ? "Always" : "Once";
+        int mw = (int)canvas_string_width(canvas, mode_label);
+        int mx = (text_x + text_w / 2) - (mw + 9) / 2;
+        int my = cy + 14;
+        // Small ▼ triangle
+        canvas_draw_line(canvas, mx, my, mx + 4, my);
+        canvas_draw_line(canvas, mx + 1, my + 1, mx + 3, my + 1);
+        canvas_draw_dot(canvas, mx + 2, my + 2);
+        canvas_draw_str(canvas, mx + 7, my + 4, mode_label);
+    }
 
     // Dark footer (hints drawn 1px higher to avoid bottom clipping)
     canvas_draw_box(canvas, 0, FTR_Y, 128, 64 - FTR_Y);
@@ -1326,14 +1351,14 @@ static void perm_draw(Canvas* canvas, void* model) {
         canvas_draw_str_aligned(canvas, 9, y + 1, AlignLeft, AlignCenter, "Cancel");
     }
     {
-        // ● OK (center)
-        int lw = (int)canvas_string_width(canvas, "OK");
+        // ● Allow (center)
+        int lw = (int)canvas_string_width(canvas, "Allow");
         int total = 6 + 2 + lw;
         int ix = 64 - total / 2 + 3;
         const int y = 58;
         canvas_draw_circle(canvas, ix, y, 4);
         canvas_draw_disc(canvas, ix, y, 2);
-        canvas_draw_str(canvas, ix + 6, 62, "OK");
+        canvas_draw_str(canvas, ix + 6, 62, "Allow");
     }
     {
         // ↩ Deny (right)
@@ -1367,6 +1392,11 @@ static bool perm_input(InputEvent* event, void* context) {
     }
     if(event->key == InputKeyDown) {
         PermModel* m = view_get_model(ui->perm_view);
+        if(!m->allow_always) {
+            /* Desktop NUS has no "always" decision — swallow the press. */
+            view_commit_model(ui->perm_view, false);
+            return true;
+        }
         m->mode = m->mode ? 0 : 1;
         view_commit_model(ui->perm_view, true);
         return true;
@@ -1615,7 +1645,7 @@ void ui_update_menu(UiState* ui, const char* pipe_delimited) {
     view_commit_model(ui->menu_view, true);
 }
 
-void ui_show_permission(UiState* ui, const char* tool, const char* detail) {
+void ui_show_permission(UiState* ui, const char* tool, const char* detail, bool allow_always) {
     if(!ui) return;
     PermModel* m = view_get_model(ui->perm_view);
     if(tool) {
@@ -1631,6 +1661,11 @@ void ui_show_permission(UiState* ui, const char* tool, const char* detail) {
         m->detail[0] = '\0';
     }
     m->anim_frame = 0;
+    m->allow_always = allow_always;
+    /* Without a toggle there's no "Always" decision to preserve — reset to
+     * Once so a stale toggle state from a previous Bridge-mode prompt
+     * doesn't bleed through. */
+    if(!allow_always) m->mode = 0;
     view_commit_model(ui->perm_view, true);
     ui->current_view = ViewIdPerm;
     view_dispatcher_switch_to_view(ui->view_dispatcher, ViewIdPerm);
