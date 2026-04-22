@@ -46,18 +46,34 @@ def main():
     transport = _make_transport(args.transport)
     daemon = Daemon(transport)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    async def _run():
+        loop = asyncio.get_running_loop()
+        stop_event = asyncio.Event()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop_event.set)
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: loop.stop())
+        daemon_task = asyncio.create_task(daemon.run())
+        stopper = asyncio.create_task(stop_event.wait())
+        # Wait for either the daemon to exit on its own or a shutdown
+        # signal.  On signal, cancel the daemon task so its `finally`
+        # block can run a clean BLE disconnect — loop.stop() would skip
+        # that cleanup entirely.
+        done, _ = await asyncio.wait(
+            {daemon_task, stopper}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if daemon_task not in done:
+            daemon_task.cancel()
+            try:
+                await daemon_task
+            except asyncio.CancelledError:
+                pass
+        stopper.cancel()
 
     try:
-        loop.run_until_complete(daemon.run())
+        asyncio.run(_run())
     except KeyboardInterrupt:
         pass
     finally:
-        loop.close()
         logging.info("Bridge stopped.")
 
 

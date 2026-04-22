@@ -57,6 +57,13 @@ class AutoTransport(Transport):
             self._active.close()
             self._active = None
 
+    async def aclose(self) -> None:
+        if self._active:
+            try:
+                await self._active.aclose()
+            finally:
+                self._active = None
+
     @property
     def is_closing(self) -> bool:
         if self._active is None:

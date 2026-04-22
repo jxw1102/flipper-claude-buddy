@@ -139,15 +139,22 @@ bool nus_protocol_parse(const char* json_line, NusMessage* msg) {
         const char* prompt = json_find_object(json_line, "prompt", &prompt_len);
         if(prompt) {
             /* Bound the search to the prompt object body by null-terminating
-             * a scratch copy. Stack-cheap because prompt objects are short. */
-            char buf[192];
-            if(prompt_len >= (int)sizeof(buf)) prompt_len = sizeof(buf) - 1;
-            memcpy(buf, prompt, prompt_len);
-            buf[prompt_len] = '\0';
-            json_get_string(buf, "id", msg->prompt_id, sizeof(msg->prompt_id));
-            json_get_string(buf, "tool", msg->prompt_tool, sizeof(msg->prompt_tool));
-            json_get_string(buf, "hint", msg->prompt_hint, sizeof(msg->prompt_hint));
-            msg->has_prompt = msg->prompt_id[0] != '\0';
+             * a scratch copy.  Heap-allocate — this parser runs on the BLE
+             * event thread (~2 KB stack), so a 192-byte stack frame on top
+             * of the enclosing NusMessage risked MemManage faults on long
+             * idle sessions. */
+            const int bufsz = 192;
+            char* buf = malloc(bufsz);
+            if(buf) {
+                if(prompt_len >= bufsz) prompt_len = bufsz - 1;
+                memcpy(buf, prompt, prompt_len);
+                buf[prompt_len] = '\0';
+                json_get_string(buf, "id", msg->prompt_id, sizeof(msg->prompt_id));
+                json_get_string(buf, "tool", msg->prompt_tool, sizeof(msg->prompt_tool));
+                json_get_string(buf, "hint", msg->prompt_hint, sizeof(msg->prompt_hint));
+                msg->has_prompt = msg->prompt_id[0] != '\0';
+                free(buf);
+            }
         }
         return true;
     }

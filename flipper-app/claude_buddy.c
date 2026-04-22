@@ -38,12 +38,22 @@
 
 #define TAG "ClaudeBuddy"
 
+/* Forward decl — registered as the BT link-state observer. */
+static void on_bt_connect(bool connected, void* context);
+
 /* Pick the BLE transport based on the persisted user setting:
  *   Bridge  → custom-UUID serial profile, talks to our Python host bridge
- *   Desktop → Nordic UART Service profile, talks to Claude Desktop/Cowork */
-static Transport* transport_ble_alloc(void) {
-    return (app_settings_get_ble_mode() == BleModeDesktop) ? transport_nus_alloc()
-                                                           : transport_bt_alloc();
+ *   Desktop → Nordic UART Service profile, talks to Claude Desktop/Cowork
+ *
+ * The link-state observer is attached here so every code path that
+ * rebuilds the BT transport (USB handover, toggle mode, readvertise,
+ * initial boot) gets the same behaviour. */
+static Transport* transport_ble_alloc(void* app_ctx) {
+    Transport* t = (app_settings_get_ble_mode() == BleModeDesktop)
+        ? transport_nus_alloc()
+        : transport_bt_alloc();
+    transport_bt_set_connect_callback(t, on_bt_connect, app_ctx);
+    return t;
 }
 
 #define SERIAL_QUEUE_SIZE 8
@@ -54,6 +64,7 @@ enum {
     CustomEventUsbDisconnect  = 102,
     CustomEventNusTick        = 103, // forward-declared below, see nus_tick_cb
     CustomEventNusReadvertise = 104, // rebuild BLE transport to pick up new adv name
+    CustomEventBtLinkDown     = 105, // bridge-mode BT link dropped (bridge died)
 };
 
 typedef struct {
@@ -68,6 +79,11 @@ typedef struct {
     bool dictating;     // true while dictation is active (set by voice_start / cleared by voice_stop)
     ProtocolMessage rx_msg_buf;     // Buffer for parsing on transport thread
     ProtocolMessage process_msg_buf; // Buffer for executing on GUI thread
+    /* Kept off the BLE RX thread's stack — NusMessage is ~430 bytes and
+     * was contributing to MemManage stack-overflow faults on long idle
+     * sessions.  Single-threaded relative to itself (only the transport
+     * RX callback writes here). */
+    NusMessage nus_rx_buf;
     char tx_buf[256];               // Shared TX building buffer (GUI thread)
     /* Cached at every transport_start so on_serial_data (transport thread)
      * can pick the right parser without doing file I/O per line. */
@@ -107,6 +123,23 @@ static void usb_poll_cb(void* context) {
         view_dispatcher_send_custom_event(
             app->ui->view_dispatcher, CustomEventUsbDisconnect);
     }
+}
+
+/* ── BT link-state callback (BT stack thread) ────────────────── */
+
+/* Fires on Bridge-mode BT connect/disconnect transitions.  Runs on the
+ * BT stack thread — must not touch UI or call transport_send.  We only
+ * care about disconnects here: when the host bridge dies its BLE link
+ * drops, and the NEXT bridge that reconnects is a fresh process that
+ * expects a fresh handshake (hello → "Claude Code / Connected" notify).
+ * Resetting app->hello_sent on the GUI thread causes the next ping to
+ * re-trigger hello, restoring the session-start notification. */
+static void on_bt_connect(bool connected, void* context) {
+    App* app = context;
+    if(!app || !app->ui || !app->ui->view_dispatcher) return;
+    if(connected) return;
+    view_dispatcher_send_custom_event(
+        app->ui->view_dispatcher, CustomEventBtLinkDown);
 }
 
 /* ── NUS state-machine tick (timer thread) ───────────────────── */
@@ -282,27 +315,27 @@ static void on_serial_data(const char* line, void* context) {
          * `log debug` on the Flipper CLI. Heartbeats arrive every 10 s
          * (plus change-driven) so this is not too noisy. */
         FURI_LOG_D(TAG, "rx: %s", line);
-        NusMessage nus;
-        if(!nus_protocol_parse(line, &nus)) {
+        NusMessage* nus = &app->nus_rx_buf;
+        if(!nus_protocol_parse(line, nus)) {
             FURI_LOG_D(TAG, "rx: parse failed");
             return;
         }
         FURI_LOG_D(
             TAG,
             "rx: kind=%d total=%d running=%d waiting=%d prompt=%d msg='%s'",
-            nus.kind, nus.total, nus.running, nus.waiting,
-            nus.has_prompt ? 1 : 0, nus.msg);
+            nus->kind, nus->total, nus->running, nus->waiting,
+            nus->has_prompt ? 1 : 0, nus->msg);
         /* Transcript is the only side effect that MUST happen inline —
          * the entries_body / turn_content_body pointers live inside the
          * parse-time JSON buffer and go stale after return.  The ring
          * buffer itself is thread-safe via its internal mutex. */
-        if(nus.kind == NusMsgHeartbeat && nus.entries_body && nus.entries_body_len > 0) {
-            nus_transcript_replace_from_entries(nus.entries_body, nus.entries_body_len);
-        } else if(nus.kind == NusMsgTurn && nus.turn_content_body) {
+        if(nus->kind == NusMsgHeartbeat && nus->entries_body && nus->entries_body_len > 0) {
+            nus_transcript_replace_from_entries(nus->entries_body, nus->entries_body_len);
+        } else if(nus->kind == NusMsgTurn && nus->turn_content_body) {
             nus_protocol_foreach_turn_text(
-                nus.turn_content_body, nus.turn_content_body_len, on_turn_text, NULL);
+                nus->turn_content_body, nus->turn_content_body_len, on_turn_text, NULL);
         }
-        if(!translate_nus_to_protocol(&nus, &app->rx_msg_buf)) return;
+        if(!translate_nus_to_protocol(nus, &app->rx_msg_buf)) return;
     } else {
         if(!protocol_parse(line, &app->rx_msg_buf)) return;
     }
@@ -319,12 +352,16 @@ static void process_message(App* app, ProtocolMessage* msg) {
     if(!app || !msg) return;
     /* Any host-originated message implies Claude is connected.
        Handles the case where Flipper launches after session-start.
-       Exception: disconnect notification should not re-set the indicator. */
+       Exception: disconnect / session_end notifications must clear the
+       indicator — otherwise the session-end notify would overwrite the
+       claude_disconnect state message that fires just before it. */
     if(msg->type == MsgTypeStatus || msg->type == MsgTypePing) {
         ui_set_claude_connected(app->ui, true);
     } else if(msg->type == MsgTypeNotify) {
         SoundType snd_check = sound_from_string(msg->sound);
-        if(snd_check != SoundDisconnect) {
+        if(snd_check == SoundDisconnect || snd_check == SoundSessionEnd) {
+            ui_set_claude_connected(app->ui, false);
+        } else {
             ui_set_claude_connected(app->ui, true);
         }
     }
@@ -571,6 +608,14 @@ static bool on_custom_event(void* context, uint32_t event) {
         nus_state_tick(&app->nus_state);
         return true;
     }
+    if(event == CustomEventBtLinkDown) {
+        /* Bridge-mode BT link dropped — likely the host bridge process
+         * exited (session ended).  Reset hello so the next ping from a
+         * freshly-started bridge retriggers the handshake and the
+         * "Claude Code / Connected" notify fires again. */
+        app->hello_sent = false;
+        return true;
+    }
     if(event == CustomEventNusReadvertise) {
         /* User asked (via cmd:name) for a new advertised name. Only a
          * BLE profile restart picks the new GAP config up; skip when
@@ -581,7 +626,7 @@ static bool on_custom_event(void* context, uint32_t event) {
             transport_free(app->transport);
             app->transport = NULL;
         }
-        app->transport = transport_ble_alloc();
+        app->transport = transport_ble_alloc(app);
         app->hello_sent = false;
         app_on_transport_mode_changed(app, true);
         transport_start(app->transport, on_serial_data, app);
@@ -601,7 +646,7 @@ static bool on_custom_event(void* context, uint32_t event) {
         }
 
         // Switch to BLE
-        app->transport = transport_ble_alloc();
+        app->transport = transport_ble_alloc(app);
         app->hello_sent = false;
         app_on_transport_mode_changed(app, true);
         ui_set_transport_mode(app->ui, true);
@@ -797,7 +842,7 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
             app->usb_poll_timer = NULL;
         }
 
-        app->transport = want_bt ? transport_ble_alloc() : transport_usb_alloc();
+        app->transport = want_bt ? transport_ble_alloc(app) : transport_usb_alloc();
         app->hello_sent = false;
         app_on_transport_mode_changed(app, want_bt);
         ui_set_transport_mode(app->ui, want_bt);
@@ -862,7 +907,7 @@ int32_t claude_buddy_app(void* p) {
      * regardless of cable state. */
     bool use_bt = !detect_usb_cable() ||
                   app_settings_get_ble_mode() == BleModeDesktop;
-    app->transport = use_bt ? transport_ble_alloc() : transport_usb_alloc();
+    app->transport = use_bt ? transport_ble_alloc(app) : transport_usb_alloc();
     app_on_transport_mode_changed(app, use_bt);
     ui_set_transport_mode(app->ui, use_bt);
 

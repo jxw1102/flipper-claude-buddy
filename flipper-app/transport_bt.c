@@ -28,6 +28,8 @@ typedef struct {
     FuriHalBleProfileBase* profile;
     TransportRxCallback  callback;
     void*                callback_ctx;
+    TransportConnectCallback connect_cb;
+    void*                connect_ctx;
     bool                 connected;
     bool                 hello_sent; /* track per-connection hello */
     /* Line-buffered RX */
@@ -79,7 +81,9 @@ static uint16_t bt_serial_event_cb(SerialServiceEvent event, void* context) {
 static void bt_status_changed_cb(BtStatus status, void* context) {
     BtTransport* bt = context;
     if(!bt) return;
-    if(status == BtStatusConnected) {
+    bool new_connected = (status == BtStatusConnected);
+    bool changed = (new_connected != bt->connected);
+    if(new_connected) {
         FURI_LOG_I(TAG, "BLE client connected, re-setting serial callback");
         bt->connected = true;
         bt->hello_sent = false;
@@ -97,6 +101,13 @@ static void bt_status_changed_cb(BtStatus status, void* context) {
         }
         bt->connected = false;
         bt->hello_sent = false;
+    }
+    /* Notify the app of the transition so it can reset its own
+     * hello_sent (re-handshake on bridge restart).  Callback runs on
+     * the BT stack thread — implementation must not touch UI or call
+     * transport_send; dispatch a custom event instead. */
+    if(changed && bt->connect_cb) {
+        bt->connect_cb(new_connected, bt->connect_ctx);
     }
 }
 
@@ -193,4 +204,16 @@ Transport* transport_bt_alloc(void) {
     bt->base.send    = bt_send;
     bt->base.free_fn = bt_free;
     return (Transport*)bt;
+}
+
+/* Optional observer — only the Bridge-mode BT transport fires this.
+ * Callers should set it after alloc and before start; we match on the
+ * start/stop vtable entries to be safe if called on a non-BT transport
+ * (e.g. NUS or USB), in which case we just no-op. */
+void transport_bt_set_connect_callback(
+    Transport* t, TransportConnectCallback cb, void* context) {
+    if(!t || t->start != bt_start) return;
+    BtTransport* bt = (BtTransport*)t;
+    bt->connect_cb = cb;
+    bt->connect_ctx = context;
 }

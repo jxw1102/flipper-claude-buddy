@@ -140,7 +140,12 @@ PROJECT_DIR="$(pwd)"
 echo "{\"action\":\"claude_connect\",\"project_dir\":\"$PROJECT_DIR\"}" \
     | nc -U "$SOCKET" 2>/dev/null || true
 
-echo "{\"action\":\"notify\",\"sound\":\"connect\",\"vibro\":true,\"text\":\"Session Start\",\"subtext\":\"$SUBTEXT\"}" \
+# Match the "Claude Code / Connected" notification shown when the Flipper
+# first connects to the bridge, so every new session gives the same clear
+# cue. Source info (New session / Resumed / After clear / …) replaces the
+# generic "Connected" subtext when available.
+SUBTEXT_DISPLAY="${SUBTEXT:-Connected}"
+echo "{\"action\":\"notify\",\"sound\":\"connect\",\"vibro\":true,\"text\":\"Claude Code\",\"subtext\":\"$SUBTEXT_DISPLAY\"}" \
     | nc -U "$SOCKET" 2>/dev/null || true
 
 exit 0

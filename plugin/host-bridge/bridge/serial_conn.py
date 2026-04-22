@@ -49,6 +49,21 @@ class SerialConnection:
         self._cancel_tasks()
         self._mark_disconnected()
 
+    async def aclose(self):
+        """Async shutdown: cancel tasks and await the transport disconnect.
+
+        Used on daemon shutdown so the Flipper sees a clean BLE disconnect
+        before we exit, letting the next bridge process reconnect
+        immediately instead of waiting for the link-supervision timeout.
+        """
+        self._cancel_tasks()
+        was_connected = self.connected
+        self.connected = False
+        if was_connected:
+            await self._transport.aclose()
+        else:
+            self._transport.close()
+
     # ── Send ───────────────────────────────────────────────────────
 
     async def send(self, data: bytes):

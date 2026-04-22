@@ -161,6 +161,27 @@ class BtTransport(Transport):
         if self._client:
             asyncio.ensure_future(self._client.disconnect())
 
+    async def aclose(self) -> None:
+        """Disconnect BLE and wait for the peer to see it.
+
+        The bridge is restarted every time the user exits and re-enters a
+        Claude session.  If we just drop the process without awaiting the
+        GATT disconnect, the Flipper's BLE stack has to wait for the
+        supervision timeout before it notices and resumes advertising —
+        during which the next bridge process can't find it.  Awaiting the
+        disconnect here makes handover near-instant.
+        """
+        self._closed = True
+        self._rx_event.set()
+        client = self._client
+        self._client = None
+        if client is None:
+            return
+        try:
+            await client.disconnect()
+        except Exception as e:
+            log.warning("BT: disconnect error: %s", e)
+
     @property
     def is_closing(self) -> bool:
         if self._closed:

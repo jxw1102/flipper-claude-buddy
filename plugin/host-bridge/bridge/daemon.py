@@ -614,7 +614,18 @@ class Daemon:
             pass
         finally:
             await self._stop_space_repeat()
-            self.serial.close()
+            # Await the transport close so the Flipper sees a clean BLE
+            # disconnect before this process exits. Without this, the next
+            # bridge process (spawned when the user starts a new Claude
+            # session) can't reconnect until the Flipper's link-supervision
+            # timeout fires.
+            try:
+                await asyncio.wait_for(self.serial.aclose(), timeout=3.0)
+            except asyncio.TimeoutError:
+                log.warning("Serial aclose timed out; forcing close")
+                self.serial.close()
+            except Exception as e:
+                log.warning("Serial aclose error: %s", e)
             await self.ipc.stop()
             log.info("=" * 60)
             log.info("Bridge daemon stopped")
