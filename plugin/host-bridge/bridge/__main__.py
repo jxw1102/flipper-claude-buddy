@@ -28,7 +28,9 @@ def main():
         sys.exit(
             f"flipper-claude-buddy requires Python 3.10 or higher. "
             f"You are running Python {sys.version.split()[0]}. "
-            f"Please upgrade Python and reinstall: pip install -e plugin/host-bridge"
+            f"Please upgrade Python, then reinstall the plugin:\n"
+            f"  claude plugin uninstall flipper-claude-buddy\n"
+            f"  claude plugin install flipper-claude-buddy@flipper-claude-buddy"
         )
 
     parser = argparse.ArgumentParser(description="Flipper Claude Buddy bridge")
