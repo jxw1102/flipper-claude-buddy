@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 
 from . import config
 from .daemon import Daemon
@@ -23,6 +24,13 @@ def _make_transport(name: str):
 
 
 def main():
+    if sys.version_info < (3, 10):
+        sys.exit(
+            f"flipper-claude-buddy requires Python 3.10 or higher. "
+            f"You are running Python {sys.version.split()[0]}. "
+            f"Please upgrade Python and reinstall: pip install -e plugin/host-bridge"
+        )
+
     parser = argparse.ArgumentParser(description="Flipper Claude Buddy bridge")
     parser.add_argument(
         "--transport",
